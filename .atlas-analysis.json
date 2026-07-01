@@ -1,0 +1,96 @@
+{
+  "projectType": "saas",
+  "projectName": "Vanguardia EPIS",
+  "projectDescription": "Sistema de alerta temprana y recomendación pedagógica personalizada para docentes y tutores de instituciones rurales y urbano-marginales del Perú, con clasificación de riesgo determinista y explicaciones generadas por Google Gemini.",
+  "theme": "luma",
+  "primaryColor": "#040404",
+  "lightColor": "#7c7c7c",
+  "darkColor": "#c3c3c3",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Guía",
+        "groups": [
+          {
+            "group": "Introducción",
+            "pages": [
+              "introduction",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Arquitectura",
+            "pages": [
+              "architecture/overview",
+              "architecture/risk-engine",
+              "architecture/ai-integration",
+              "architecture/offline-fallback"
+            ]
+          },
+          {
+            "group": "Interfaz Web",
+            "pages": [
+              "frontend/login",
+              "frontend/monitoring",
+              "frontend/admin",
+              "frontend/reports"
+            ]
+          },
+          {
+            "group": "Despliegue",
+            "pages": [
+              "deployment/installation",
+              "deployment/configuration",
+              "deployment/cache-generation"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Endpoints",
+            "pages": [
+              "api/overview",
+              "api/students",
+              "api/teachers",
+              "api/stats"
+            ]
+          },
+          {
+            "group": "Datos",
+            "pages": [
+              "api/data-model",
+              "api/risk-levels"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Motor de clasificación de riesgo 100% determinista (🟢/🟡/🔴/⚪) basado en asistencia, notas y participación",
+    "Explicaciones y recomendaciones pedagógicas generadas por Google Gemini 2.0 Flash",
+    "Modo offline con caché de respuestas pre-generadas (Art. VIII)",
+    "REST API construida con FastAPI con endpoints para estudiantes, docentes y estadísticas",
+    "Dashboard interactivo con panel de monitoreo, administración y reportes",
+    "Manejo explícito de datos faltantes con estado ⚪ para evitar estigmatización",
+    "Metodología SDD (Spec-Driven Development) con constitución de proyecto de 12 artículos"
+  ],
+  "publicApiSurface": [
+    "GET /api/health",
+    "GET /api/estudiantes",
+    "GET /api/estudiantes/{id_estudiante}",
+    "POST /api/estudiantes",
+    "DELETE /api/estudiantes/{id_estudiante}",
+    "GET /api/docentes",
+    "POST /api/docentes",
+    "DELETE /api/docentes/{id_docente}",
+    "GET /api/stats",
+    "clasificar_estudiante(estudiante: dict) -> dict",
+    "generar_explicacion(id, nombre, grado, nivel_riesgo, motivos, variables_faltantes) -> dict",
+    "obtener_fallback(id_estudiante: str) -> dict | None",
+    "guardar_en_cache(id_estudiante, explicacion, recomendacion) -> None"
+  ]
+}

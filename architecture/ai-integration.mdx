@@ -1,0 +1,224 @@
+---
+title: "Google Gemini AI Integration"
+sidebarTitle: "Integración Gemini"
+description: "How Vanguardia EPIS uses Google Gemini 2.0 Flash to generate non-stigmatizing pedagogical explanations and recommendations for teachers."
+---
+
+Once `classifier.py` has determined a student's risk level, `backend/ia_client.py` takes over to generate the human-readable content that the teacher actually reads. This module calls Google Gemini 2.0 Flash with a strict system prompt and a per-student user prompt, then parses the JSON response into an explanation and a recommendation. If the API is unavailable or times out, the module falls back to pre-generated cached responses, ensuring teachers always see useful content — never a raw error message.
+
+---
+
+## Model Configuration
+
+```python
+MODEL = "gemini-2.0-flash"   # Fast and free for demo
+MAX_TOKENS = 300
+TIMEOUT_SEGUNDOS = 10.0      # Strict timeout — falls back to cache on breach
+# temperature = 0.7          # Set in GenerateContentConfig
+```
+
+| Parameter | Value | Rationale |
+|---|---|---|
+| Model | `gemini-2.0-flash` | Low latency, sufficient quality for 2–3 sentence outputs |
+| Max output tokens | 300 | Each of `explicacion` and `recomendacion` should be 2–3 sentences |
+| Timeout | 10 seconds | Rural schools may have slow connections; breaching triggers fallback |
+| Temperature | 0.7 | Allows variation between students while keeping outputs coherent |
+
+---
+
+## System Prompt (§5.2) — The 8 Non-Negotiable Language Rules
+
+The system prompt is fixed at specification time and encodes **Article IV** of the project constitution: all AI-generated text must be constructive, respectful, and non-stigmatising. It is sent with every Gemini request.
+
+```
+Eres un asistente que ayuda a docentes de instituciones educativas rurales del Perú
+a redactar explicaciones y recomendaciones de apoyo para estudiantes según su nivel
+de riesgo académico.
+
+Reglas obligatorias (no negociables):
+1. NUNCA uses lenguaje que etiquete, culpabilice o estigmatice al estudiante.
+   Prohibido: "problemático", "flojo", "en riesgo de fracaso", "mal alumno", etc.
+2. El tono debe ser constructivo y orientado a una acción concreta del docente.
+3. La explicación debe basarse ÚNICAMENTE en los motivos y datos entregados —
+   no inventes datos que no se te dieron.
+4. Si falta alguna variable, puedes mencionarlo con naturalidad, sin dramatizar.
+5. La recomendación debe ser específica al caso, no un mensaje genérico.
+6. Responde ÚNICAMENTE en JSON válido, sin texto adicional ni markdown,
+   con este formato exacto:
+   {"explicacion": "...", "recomendacion": "..."}
+7. Cada campo debe tener máximo 2-3 frases.
+8. Escribe en español peruano, con respeto y dignidad hacia el estudiante.
+```
+
+<Warning>
+Rules 1 and 6 are the most critical. Rule 1 prevents harmful labelling; Rule 6 ensures the response can be parsed as JSON without string manipulation. Gemini occasionally wraps responses in markdown code fences (`` ```json ``), which is why the module includes an explicit stripping step.
+</Warning>
+
+---
+
+## User Prompt Construction (§5.3)
+
+`construir_user_prompt()` builds the per-student prompt from the classifier's output. It passes the human-readable motives list — not the raw numeric values — so Gemini can reference specific observations without needing access to the original dataset.
+
+```python
+def construir_user_prompt(
+    nombre: str,
+    grado: str,
+    nivel_riesgo: str,
+    motivos: list[str],
+    variables_faltantes: list[str],
+) -> str:
+```
+
+**Example rendered prompt for a student:**
+
+```
+Nombre del estudiante: Carlos Mamani
+Grado: 2.º de secundaria
+Nivel de riesgo detectado: 🔴
+Motivos de la clasificación:
+- Asistencia: 68% — nivel 🔴 (umbral 🟢 es ≥90%)
+- Notas: 9.5 — nivel 🔴 (umbral 🟢 es ≥13)
+- Participación: alta — nivel 🟢
+Variables sin dato: ninguna
+
+Genera la explicación y recomendación según las reglas del sistema.
+```
+
+---
+
+## `generar_explicacion()` — Full Signature
+
+```python
+async def generar_explicacion(
+    id_estudiante: str,
+    nombre: str,
+    grado: str,
+    nivel_riesgo: str,
+    motivos: list[str],
+    variables_faltantes: list[str],
+) -> dict:
+```
+
+**Returns:**
+
+```python
+{
+    "explicacion": "...",       # str | None
+    "recomendacion": "...",     # str | None
+    "origen_ia": "vivo",        # see states below
+}
+```
+
+---
+
+## The Three `origen_ia` States
+
+Every response from `generar_explicacion()` includes an `origen_ia` field. The frontend uses this tag to show the teacher where the content came from.
+
+| Value | Meaning | When it occurs |
+|---|---|---|
+| `"vivo"` | Live Gemini API response | API key configured, call succeeded within 10 s |
+| `"fallback"` | Pre-generated cache hit | API failed/timed out AND `cache/respuestas_ia.json` has an entry for this student |
+| `"error_sin_cache"` | No API, no cache | API failed AND no cache entry exists — last-resort response shown |
+| `"no_aplica"` | Not applicable | Student's risk level is `⚪` — no AI response is needed |
+
+<Note>
+`"no_aplica"` is returned immediately before any API call is made. The ⚪ level means all three data variables are missing, so there are no concrete motives for Gemini to explain.
+</Note>
+
+---
+
+## Special Case: ⚪ Level
+
+Students classified as `NIVEL_INSUFICIENTE` are skipped entirely:
+
+```python
+# El estado ⚪ no requiere explicación de IA
+if nivel_riesgo == "⚪":
+    return {
+        "explicacion": None,
+        "recomendacion": None,
+        "origen_ia": "no_aplica",
+    }
+```
+
+This prevents generating potentially misleading AI content when there is no data to reason about. The teacher's UI shows a "requires manual review" notice instead.
+
+---
+
+## Resilience Flow
+
+<Steps>
+  <Step title="Check for API key">
+    If `GEMINI_API_KEY` is not set in the environment (loaded from `backend/.env`), the module skips the API call entirely and goes straight to the fallback cache lookup.
+  </Step>
+  <Step title="Call Gemini with strict timeout">
+    The API call is wrapped in `asyncio.wait_for(..., timeout=TIMEOUT_SEGUNDOS)`. The call is run via `run_in_executor` so it doesn't block the FastAPI event loop while other students are being processed in parallel.
+
+    ```python
+    response = await asyncio.wait_for(
+        asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: client.models.generate_content(
+                model=MODEL,
+                contents=user_prompt,
+                config=types.GenerateContentConfig(
+                    system_instruction=SYSTEM_PROMPT,
+                    max_output_tokens=MAX_TOKENS,
+                    temperature=0.7,
+                ),
+            )
+        ),
+        timeout=TIMEOUT_SEGUNDOS,
+    )
+    ```
+  </Step>
+  <Step title="Strip Markdown fences and parse JSON">
+    Gemini sometimes wraps its response in a `` ```json `` code block despite Rule 6. The module strips any leading `` ``` `` and trailing `` ``` `` before calling `json.loads()`.
+
+    ```python
+    if texto.startswith("```"):
+        texto = texto.split("```")[1]
+        if texto.startswith("json"):
+            texto = texto[4:]
+        texto = texto.strip()
+    datos = json.loads(texto)
+    ```
+  </Step>
+  <Step title="On any error → fallback cache">
+    `asyncio.TimeoutError` and all other exceptions are caught in a single `except` block. The module then calls `obtener_fallback(id_estudiante)` from `fallback.py`. If a cache entry exists, it is returned with `origen_ia = "fallback"`.
+  </Step>
+  <Step title="Last resort → error_sin_cache">
+    If neither the live API nor the cache can provide a response, `respuesta_error_sin_cache()` is returned. This always returns a polite, teacher-facing message — **never a raw Python exception or stack trace**.
+  </Step>
+</Steps>
+
+---
+
+## Sample Gemini Response
+
+When the model follows Rule 6 correctly, the raw API response text looks like:
+
+```json
+{
+  "explicacion": "En las últimas semanas, Carlos ha presentado una asistencia del 68%, por debajo del umbral esperado, y un promedio de 9.5 en sus evaluaciones. Estas señales sugieren que puede estar enfrentando dificultades que merecen atención oportuna.",
+  "recomendacion": "Se recomienda al docente coordinar una conversación individual con Carlos para identificar posibles obstáculos, y comunicarse con la familia para explorar cómo apoyarlo desde el hogar en su asistencia regular."
+}
+```
+
+After `json.loads()`, the `explicacion` and `recomendacion` fields are extracted, validated as non-empty strings, and returned alongside `origen_ia: "vivo"`. The response is also written to the disk cache via `guardar_en_cache()` for future offline use.
+
+---
+
+## Integration with the Session Cache
+
+`main.py` wraps every processed student result in `_resultados_cache` (an in-memory dict keyed by student ID). On subsequent requests to `GET /api/estudiantes`, cached results are returned directly without re-calling `generar_explicacion()`. This avoids repeated Gemini charges during a demo session and keeps response times fast.
+
+```python
+# From main.py
+if _resultados_cache and not force_refresh:
+    return list(_resultados_cache.values())
+```
+
+Pass `?force_refresh=true` to any endpoint to bypass both the session cache and re-run the full classify + AI pipeline.

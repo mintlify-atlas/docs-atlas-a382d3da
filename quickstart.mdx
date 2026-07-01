@@ -1,47 +1,190 @@
 ---
-title: "Quickstart"
-description: "Begin with a guide on the fastest path to a successful outcome"
+title: "Get Started with Vanguardia EPIS"
+sidebarTitle: "Quickstart"
+description: "Learn how to install, configure, and run Vanguardia EPIS locally in under 5 minutes using the automated startup script."
 ---
 
-Describe how someone begins using your product. What is the first thing they need to do? Are there any prerequisites?
-
-A quickstart should take someone from zero to using your product. They'll get a quick win and a sense of what they can accomplish.
-
-## Prerequisites
-
-Before you begin, you must have:
-
-- Requirement one (for example, Node.js 18+, a free account, an API key)
-- Requirement two (for example, a compatible device, a compatible browser, a compatible operating system)
-
-## Get started
+Vanguardia EPIS se puede instalar y ejecutar en cualquier dispositivo con Python 3.11+. El script de inicio automatizado (`start.sh`) gestiona la configuración del entorno, la generación del caché de IA y el arranque del servidor FastAPI en un solo comando. Sigue los pasos a continuación para tener el sistema operativo en menos de 5 minutos.
 
 <Steps>
-  <Step title="Install">
-    Describe how to install your product or sign up.
+
+  <Step title="Requisitos previos">
+    Antes de clonar el repositorio, asegúrate de contar con lo siguiente:
+
+    - **Python 3.11 o superior** instalado en tu sistema.
+    - Gestor de paquetes **pip** disponible en el PATH.
+    - Una **Gemini API Key** — puedes obtenerla de forma gratuita en [Google AI Studio](https://aistudio.google.com/app/apikey).
+
+    <Note>
+      La API Key es opcional para ejecutar el servidor. Sin ella, el sistema arranca en **modo de respaldo (fallback)** y sirve las explicaciones de IA desde el caché local en `cache/respuestas_ia.json`. Consulta el Paso 5 para pre-generar ese caché.
+    </Note>
+
+    Verifica tu versión de Python:
 
     ```bash
-    npm install your-package
+    python3 --version
+    # Python 3.11.x o superior
     ```
   </Step>
-  <Step title="Configure">
-    Describe any setup or configuration needed before first use.
+
+  <Step title="Clonar el repositorio">
+    Clona el repositorio de Vanguardia EPIS y accede al directorio del proyecto:
 
     ```bash
-    your-cli init
+    git clone https://github.com/Pierrot-01/Hackathon_epis_2026.git
+    cd Hackathon_epis_2026
     ```
   </Step>
-  <Step title="Run it">
-    Show the first thing a user does to see it working.
+
+  <Step title="Instalar dependencias">
+    Instala los paquetes de Python necesarios desde el archivo `requirements.txt`:
 
     ```bash
-    your-cli start
+    pip install -r backend/requirements.txt
+    ```
+
+    Las dependencias que se instalarán son:
+
+    ```text
+    fastapi>=0.115.0
+    uvicorn[standard]>=0.30.0
+    google-genai>=2.0.0
+    python-dotenv>=1.0.0
+    pydantic>=2.0.0
+    ```
+
+    <Note>
+      En distribuciones Linux basadas en Debian o Arch que restringen instalaciones globales, puedes añadir la bandera `--break-system-packages` o crear un entorno virtual con `python3 -m venv .venv && source .venv/bin/activate` antes de instalar.
+    </Note>
+  </Step>
+
+  <Step title="Configurar las variables de entorno">
+    Crea el archivo `.env` dentro del directorio `backend/` a partir de la plantilla incluida:
+
+    ```bash
+    cp backend/.env.example backend/.env
+    ```
+
+    Abre `backend/.env` en tu editor y añade tu clave de API:
+
+    ```env
+    # API Key de Google Gemini
+    # Obtén una GRATIS en: https://aistudio.google.com/app/apikey
+    GEMINI_API_KEY=tu-api-key-de-gemini-aqui
+
+    # Puerto del servidor (opcional, por defecto 8000)
+    # PORT=8000
+    ```
+
+    Reemplaza `tu-api-key-de-gemini-aqui` con tu clave real. Guarda el archivo.
+
+    **Alternativa rápida:** puedes pasar la API key directamente al script de inicio como argumento de línea de comandos (el script escribe el `.env` por ti):
+
+    ```bash
+    ./start.sh --api-key AIzaSyTU_CLAVE_AQUI
     ```
   </Step>
+
+  <Step title="Pre-generar el caché de IA (recomendado)">
+    Para evitar límites de tasa (*rate limits*) de la API de Gemini durante una demo, o para trabajar completamente sin conexión a internet, pre-carga las respuestas de la IA ejecutando:
+
+    ```bash
+    export GEMINI_API_KEY=tu-api-key-de-gemini-aqui
+    python3 generar_cache.py
+    ```
+
+    Este script evalúa todos los estudiantes del dataset ficticio, invoca la API de Gemini para cada uno y guarda las explicaciones en `cache/respuestas_ia.json`. El servidor las servirá automáticamente si la API no está disponible (`origen_ia: "fallback"`).
+
+    <Tip>
+      El script `start.sh` detecta automáticamente si el caché ya existe. Si no existe y tienes una API Key configurada, lo genera por ti la primera vez que ejecutas el servidor.
+    </Tip>
+  </Step>
+
+  <Step title="Iniciar el servidor">
+    Tienes dos formas de arrancar el servidor:
+
+    **Opción A — Script automatizado (recomendada):**
+
+    ```bash
+    ./start.sh
+    ```
+
+    O pasando la API Key como argumento:
+
+    ```bash
+    ./start.sh --api-key AIzaSyTU_CLAVE_AQUI
+    ```
+
+    El script verifica el `.env`, genera el caché si hace falta y lanza FastAPI con Uvicorn. La salida esperada en consola es:
+
+    ```
+    ✅ Cache de respaldo encontrado.
+
+    🚀 Iniciando Vanguardia EPIS Backend...
+       URL: http://localhost:8000
+       Dashboard: http://localhost:8000/monitoreo.html
+       API Docs: http://localhost:8000/docs
+    ```
+
+    **Opción B — Directamente con Python:**
+
+    ```bash
+    cd backend
+    python3 main.py
+    ```
+
+    <Warning>
+      Si no se encuentra ninguna `GEMINI_API_KEY` (ni en el `.env` ni en las variables de entorno del sistema) y el caché no ha sido pre-generado, el servidor arrancará igualmente pero las respuestas de IA mostrarán `origen_ia: "error_sin_cache"`. Genera el caché con el Paso 5 para evitar esto.
+    </Warning>
+  </Step>
+
+  <Step title="Verificar que el servidor está activo">
+    Una vez que el servidor esté corriendo en `http://localhost:8000`, verifica su estado con:
+
+    ```bash
+    curl http://localhost:8000/api/health
+    ```
+
+    Respuesta esperada:
+
+    ```json
+    {"status": "ok", "version": "1.0.0"}
+    ```
+
+    Para obtener el listado completo de estudiantes con sus niveles de riesgo y explicaciones de IA:
+
+    ```bash
+    curl http://localhost:8000/api/estudiantes
+    ```
+
+    La respuesta es un array JSON donde cada objeto incluye campos como `nivel_riesgo` (🟢 / 🟡 / 🔴 / ⚪), `motivos`, `explicacion`, `recomendacion` y `origen_ia`.
+
+    Accede también a los siguientes recursos desde tu navegador:
+
+    | Recurso | URL |
+    |---------|-----|
+    | Dashboard de monitoreo | [http://localhost:8000/monitoreo.html](http://localhost:8000/monitoreo.html) |
+    | Panel de administración | [http://localhost:8000/admin.html](http://localhost:8000/admin.html) |
+    | Reportes | [http://localhost:8000/reportes.html](http://localhost:8000/reportes.html) |
+    | Documentación interactiva de la API (Swagger UI) | [http://localhost:8000/docs](http://localhost:8000/docs) |
+
+    <Note>
+      La documentación interactiva en `/docs` es generada automáticamente por FastAPI. Desde allí puedes explorar y probar todos los endpoints sin necesidad de un cliente HTTP externo.
+    </Note>
+  </Step>
+
 </Steps>
 
-<Tip>
-  Give people a way to get help. This could be a link to a support page, a chat with a customer support agent, or a forum for your product.
+## Verificar el motor de clasificación
 
-  Example: Need help? Reach out to us at [support@yourcompany.com](mailto:support@yourcompany.com).
+<Tip>
+  Antes de usar el sistema en producción o demo, ejecuta la suite de pruebas unitarias del motor de reglas determinista para confirmar que todos los umbrales están correctamente implementados (Art. III de la Constitución):
+
+  ```bash
+  python3 backend/classifier.py
+  ```
+
+  Salida esperada: `✅ Todos los tests pasaron! (10/10)`
+
+  Estos 10 casos cubren escenarios como todos los indicadores en verde, una o dos señales amarillas, escalada por acumulación, límites exactos de umbral, y combinaciones con datos faltantes parciales o totales.
 </Tip>

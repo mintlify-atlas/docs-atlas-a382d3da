@@ -1,0 +1,289 @@
+---
+title: "Risk Level Classification: 🟢 🟡 🔴 ⚪ Reference"
+sidebarTitle: "Niveles de Riesgo"
+description: "Complete reference for the four risk levels used by Vanguardia EPIS, including the exact thresholds, decision rules, and examples for each level."
+---
+
+The Vanguardia EPIS classifier assigns every student one of four risk levels based on up to three observable variables: attendance percentage (`asistencia_pct`), grade average (`notas_promedio`), and qualitative classroom participation (`participacion`). The classification is fully deterministic — given the same input values, the same level is always produced — and every decision is accompanied by a human-readable audit trail stored in the `motivos` field. This page documents the frozen thresholds, the aggregation rules, how missing data is handled, and how the AI layer responds to each level.
+
+---
+
+## The Four Risk Levels
+
+| Symbol | Name | Meaning |
+|---|---|---|
+| 🟢 | **Bajo** | All available variables are within the green threshold. No intervention needed; continue routine monitoring. |
+| 🟡 | **Medio** | Exactly one variable falls in the yellow (caution) range. Warrants closer monitoring and a brief follow-up conversation. |
+| 🔴 | **Alto** | At least one variable is individually red, **or** two or more variables are yellow. Requires a prioritised, personalised intervention. |
+| ⚪ | **Dato insuficiente** | All three signal variables are null or invalid. Automatic classification is not possible; manual review by the teacher is required. |
+
+<Note>
+  The ⚪ level is not a low-risk verdict — it is the absence of enough data to produce any verdict. A student with `nivel_riesgo: "⚪"` may be at high risk; the system simply cannot determine this from available records.
+</Note>
+
+---
+
+## §4.1 — Frozen Thresholds
+
+The following thresholds are defined as named constants in `backend/classifier.py` and **must not be changed without a full specification review**. They are referred to as "frozen" throughout the codebase because the classifier's correctness guarantees depend on them remaining stable between runs.
+
+```python
+# backend/classifier.py — frozen thresholds (§4.1)
+UMBRAL_ASISTENCIA_BAJO  = 90   # >= 90  → 🟢
+UMBRAL_ASISTENCIA_MEDIO = 75   # 75–89  → 🟡 | < 75 → 🔴
+
+UMBRAL_NOTAS_BAJO  = 13        # >= 13  → 🟢
+UMBRAL_NOTAS_MEDIO = 11        # 11–12  → 🟡 | < 11 → 🔴
+```
+
+### Attendance (`asistencia_pct`)
+
+Monthly attendance as a percentage (0–100).
+
+| Range | Level |
+|---|---|
+| ≥ 90% | 🟢 Bajo |
+| 75% – 89% | 🟡 Medio |
+| < 75% | 🔴 Alto |
+
+### Grades (`notas_promedio`)
+
+General grade average on Peru's vigesimal scale (0–20).
+
+| Range | Level |
+|---|---|
+| ≥ 13 | 🟢 Bajo |
+| 11 – 12 | 🟡 Medio |
+| < 11 | 🔴 Alto |
+
+### Participation (`participacion`)
+
+Qualitative classroom participation level.
+
+| Value | Level |
+|---|---|
+| `"alta"` or `"media"` | 🟢 Bajo |
+| `"baja"` | 🟡 Medio |
+| *(any other / null)* | treated as missing |
+
+<Note>
+  Participation is the only variable that **cannot trigger 🔴 on its own**. As noted in `classifier.py` §4.1: *"participación nunca alcanza 🔴 de forma aislada."* A `"baja"` participation value can contribute a yellow signal toward the 2+ yellow → 🔴 aggregation rule, but it cannot directly classify a student as high-risk by itself.
+</Note>
+
+---
+
+## Art. III §3.2.1 — Aggregation Rules (Worst-Case)
+
+After each available variable is evaluated individually, the classifier applies a worst-case aggregation to produce the single overall `nivel`. The rule prioritises student safety: when in doubt, escalate.
+
+| Any variable at 🔴? | Count of 🟡 signals | → Overall level |
+|:---:|:---:|:---:|
+| Yes | any | 🔴 |
+| No | 0 | 🟢 |
+| No | 1 | 🟡 |
+| No | 2 or 3 | 🔴 |
+
+The relevant section from `clasificar_estudiante()`:
+
+```python
+# backend/classifier.py — aggregation (§3.2.1)
+valores = list(nivel_por_variable.values())
+
+if NIVEL_ALTO in valores:
+    # Any individual red → overall red
+    nivel_global = NIVEL_ALTO
+else:
+    señales_negativas = sum(1 for v in valores if v == NIVEL_MEDIO)
+    if señales_negativas == 0:
+        nivel_global = NIVEL_BAJO
+    elif señales_negativas == 1:
+        nivel_global = NIVEL_MEDIO
+    else:
+        # 2+ yellow signals → escalate to red
+        nivel_global = NIVEL_ALTO
+```
+
+<Warning>
+  The 2-yellow → 🔴 escalation means a student with `asistencia_pct=80` (🟡) **and** `notas_promedio=11.5` (🟡) will receive a 🔴 classification — even though neither variable is individually red. This is intentional: two concurrent warning signals represent a compound risk that the system treats as high-priority. See EST-006 in the worked examples below.
+</Warning>
+
+---
+
+## Art. IX §9.3.2 — Missing Data Handling
+
+The classifier is designed to produce a meaningful output even when one or two variables are absent. The three cases are:
+
+| Available variables | Behaviour |
+|---|---|
+| **0** (all null/invalid) | Returns `nivel: "⚪"`. No variable-level evaluation is performed. `motivos` contains the single message: `"Las 3 variables carecen de dato — requiere revisión manual del docente"`. |
+| **1 or 2** | Classifies using only the available variables. Missing variable names appear in `variables_faltantes` and generate a `"sin dato — evaluado sin esta variable"` entry in `motivos`. The overall level is determined solely from the available signals. |
+| **3** | Normal classification path. `variables_faltantes` is an empty list. |
+
+Validation failures (values outside the legal range for `asistencia_pct`, `notas_promedio`, or `participacion`) are treated identically to null values: the field is coerced to `null` by `normalizar_campo()` before classification begins, and the variable is added to `variables_faltantes`.
+
+---
+
+## AI Treatment by Risk Level
+
+The Gemini AI client in `backend/ia_client.py` behaves differently depending on the student's risk level:
+
+| Risk level | AI call made? | `origen_ia` value | `explicacion` / `recomendacion` |
+|---|---|---|---|
+| 🟢 Bajo | ✅ Yes | `"vivo"` or `"fallback"` | Personalised to the student's data |
+| 🟡 Medio | ✅ Yes | `"vivo"` or `"fallback"` | Personalised to the student's data |
+| 🔴 Alto | ✅ Yes | `"vivo"` or `"fallback"` | Personalised to the student's data |
+| ⚪ Dato insuficiente | ❌ No | `"no_aplica"` | Both fields are `null` |
+
+<Note>
+  When a live Gemini API call fails and no previous cache entry exists for the student, `origen_ia` is set to `"error_sin_cache"` and both `explicacion` and `recomendacion` will be `null` — regardless of the risk level. This state is distinct from `"no_aplica"` and indicates a transient connectivity or API issue rather than a design decision.
+</Note>
+
+---
+
+## Worked Examples
+
+The following examples walk through the full classification of three real students from `data/estudiantes.json`, showing exactly how the thresholds and aggregation rules combine to produce the final level.
+
+### Example 1 — EST-001: 🟢 Bajo
+
+**Student:** María Quispe Huamán — 3ro de secundaria
+
+**Raw data:**
+```json
+{
+  "asistencia_pct": 95,
+  "notas_promedio": 15.5,
+  "participacion": "alta"
+}
+```
+
+**Step-by-step evaluation:**
+
+| Variable | Value | Threshold applied | Per-variable level |
+|---|---|---|---|
+| `asistencia_pct` | 95% | ≥ 90% → 🟢 | 🟢 |
+| `notas_promedio` | 15.5 | ≥ 13 → 🟢 | 🟢 |
+| `participacion` | "alta" | "alta" or "media" → 🟢 | 🟢 |
+
+**Aggregation:** No 🔴 variables. Zero 🟡 signals → **Overall: 🟢**
+
+**Classifier output:**
+```python
+{
+    "nivel": "🟢",
+    "motivos": [
+        "Asistencia: 95% — nivel 🟢 (umbral 🟢 es ≥90%)",
+        "Notas: 15.5 — nivel 🟢 (umbral 🟢 es ≥13)",
+        "Participación: alta — nivel 🟢"
+    ],
+    "variables_faltantes": []
+}
+```
+
+---
+
+### Example 2 — EST-002: 🔴 Alto
+
+**Student:** Jhon Huamán Torres — 2do de secundaria
+
+**Raw data:**
+```json
+{
+  "asistencia_pct": 60,
+  "notas_promedio": 9.5,
+  "participacion": "baja",
+  "observaciones": "Múltiples inasistencias consecutivas reportadas."
+}
+```
+
+**Step-by-step evaluation:**
+
+| Variable | Value | Threshold applied | Per-variable level |
+|---|---|---|---|
+| `asistencia_pct` | 60% | < 75% → 🔴 | 🔴 |
+| `notas_promedio` | 9.5 | < 11 → 🔴 | 🔴 |
+| `participacion` | "baja" | "baja" → 🟡 | 🟡 |
+
+**Aggregation:** `asistencia_pct` and `notas_promedio` are both 🔴 → the first rule fires immediately → **Overall: 🔴**
+
+**Classifier output:**
+```python
+{
+    "nivel": "🔴",
+    "motivos": [
+        "Asistencia: 60% — nivel 🔴 (umbral 🟢 es ≥90%)",
+        "Notas: 9.5 — nivel 🔴 (umbral 🟢 es ≥13)",
+        "Participación: baja — nivel 🟡"
+    ],
+    "variables_faltantes": []
+}
+```
+
+**AI explanation (from `cache/respuestas_ia.json`):**
+> *"Jhon presenta una asistencia del 60% y un promedio de 9.5, junto con una participación baja en aula, lo que sugiere que puede estar atravesando dificultades que le impiden involucrarse de manera regular en las actividades escolares."*
+
+---
+
+### Example 3 — EST-004: ⚪ Dato insuficiente
+
+**Student:** Luis Ccorahua Ramos — 4to de secundaria
+
+**Raw data:**
+```json
+{
+  "asistencia_pct": null,
+  "notas_promedio": null,
+  "participacion": null,
+  "observaciones": "Sin registros disponibles esta semana."
+}
+```
+
+**Step-by-step evaluation:**
+
+All three signal variables are `null`. `normalizar_campo()` leaves them as `null`. The classifier detects `len(variables_presentes) == 0` and exits immediately with the insufficient-data sentinel.
+
+**Aggregation:** Not applicable — the short-circuit path fires before any threshold is evaluated.
+
+**Classifier output:**
+```python
+{
+    "nivel": "⚪",
+    "motivos": [
+        "Las 3 variables carecen de dato — requiere revisión manual del docente"
+    ],
+    "variables_faltantes": ["asistencia", "notas", "participacion"]
+}
+```
+
+**AI call:** None. `origen_ia` is set to `"no_aplica"` and both `explicacion` and `recomendacion` are `null` in the API response.
+
+---
+
+### Bonus Example — EST-006: 🔴 via 2× Yellow Escalation
+
+**Student:** Pedro Mamani Apaza — 3ro de secundaria
+
+This case illustrates the 2-yellow → 🔴 aggregation path, which is distinct from either variable being individually red.
+
+**Raw data:**
+```json
+{
+  "asistencia_pct": 80,
+  "notas_promedio": 11.5,
+  "participacion": "alta"
+}
+```
+
+**Step-by-step evaluation:**
+
+| Variable | Value | Threshold applied | Per-variable level |
+|---|---|---|---|
+| `asistencia_pct` | 80% | 75% ≤ 80% < 90% → 🟡 | 🟡 |
+| `notas_promedio` | 11.5 | 11 ≤ 11.5 < 13 → 🟡 | 🟡 |
+| `participacion` | "alta" | "alta" or "media" → 🟢 | 🟢 |
+
+**Aggregation:** No 🔴 variables. Two 🟡 signals → 2+ yellow rule fires → **Overall: 🔴**
+
+<Tip>
+  EST-006 is the canonical demonstration of why the accumulation rule exists. Pedro's attendance and grades are each only mildly concerning in isolation, but their simultaneous presence signals a compounding pattern that warrants the same priority response as a single catastrophic indicator. The AI explanation for this student specifically calls out the combination: *"Pedro combina una asistencia del 80% con un promedio de 11.5, dos indicadores que se ubican en el rango de atención… la combinación de estas señales justifica un seguimiento más cercano."*
+</Tip>

@@ -1,0 +1,133 @@
+---
+title: "Vanguardia EPIS Architecture Overview"
+sidebarTitle: "Visión General"
+description: "How Vanguardia EPIS separates deterministic risk classification from AI-generated explanations to ensure auditability and offline resilience."
+---
+
+Vanguardia EPIS is a school dropout and academic-risk early-warning system built for Peruvian rural schools. Its defining architectural principle — established in **Article II of the project constitution** — is a strict separation of responsibilities: a frozen-threshold rule engine handles all risk classification deterministically, while Google Gemini generates the human-readable explanations and recommendations. This split guarantees that every risk decision is fully auditable by a teacher or administrator without any dependency on an external API, while still delivering personalised, non-stigmatising language for each student.
+
+---
+
+## Component Flow
+
+The system processes student data through five sequential stages. Each stage has a single owner and a well-defined contract with the next.
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                       VANGUARDIA EPIS — FLOW                        │
+│                                                                     │
+│  data/estudiantes.json                                              │
+│        │                                                            │
+│        ▼                                                            │
+│  ┌─────────────┐    clasificar_estudiante()    ┌──────────────────┐ │
+│  │  Dataset    │ ──────────────────────────►  │   classifier.py  │ │
+│  │  (JSON)     │                               │  (deterministic) │ │
+│  └─────────────┘                               └────────┬─────────┘ │
+│                                                         │           │
+│                                               nivel 🟢/🟡/🔴/⚪   │
+│                                               + motivos[]           │
+│                                                         │           │
+│                                                         ▼           │
+│                                               ┌──────────────────┐  │
+│                                               │   ia_client.py   │  │
+│                                               │  Gemini 2.0 Flash│  │
+│                                               │  (or fallback)   │  │
+│                                               └────────┬─────────┘  │
+│                                                        │            │
+│                                              explicacion + recom.   │
+│                                              origen_ia tag          │
+│                                                        │            │
+│                                                        ▼            │
+│                                               ┌──────────────────┐  │
+│                                               │  FastAPI (main)  │  │
+│                                               │  /api/estudiantes│  │
+│                                               └────────┬─────────┘  │
+│                                                        │            │
+│                                                        ▼            │
+│                                               ┌──────────────────┐  │
+│                                               │  HTML Frontend   │  │
+│                                               │  monitoreo.html  │  │
+│                                               └──────────────────┘  │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Three-Layer Architecture
+
+Vanguardia EPIS is organised into three clearly separated layers, each with its own technology and responsibilities.
+
+| Layer | Components | Responsibility |
+|---|---|---|
+| **Data** | `data/estudiantes.json`, `data/docentes.json`, `cache/respuestas_ia.json` | Source of truth for student records, teacher roster, and pre-generated AI responses |
+| **Business Logic** | `backend/classifier.py`, `backend/ia_client.py`, `backend/fallback.py`, `backend/main.py` (FastAPI) | Deterministic classification, AI text generation, offline resilience, REST API |
+| **Presentation** | `frontend/index.html`, `frontend/monitoreo.html` | Teacher-facing dashboard served as static HTML by FastAPI |
+
+---
+
+## Spec-Driven Development (SDD)
+
+Vanguardia EPIS was built using **Spec-Driven Development**: the classification thresholds, data contracts, and AI prompt rules were all frozen in a written specification before a single line of code was written. This means:
+
+- The risk thresholds in `classifier.py` (`UMBRAL_ASISTENCIA_BAJO = 90`, etc.) are explicitly marked as **"congelados" (§4.1)** and must not be changed without a spec change.
+- The `SYSTEM_PROMPT` in `ia_client.py` is fixed at **§5.2** and contains 8 non-negotiable language rules.
+- The API response schema (`EstudianteResultado`) is specified at **§7.1** and is the contract between backend and frontend.
+
+<Note>
+SDD ensures that auditability and non-stigmatising language are architectural constraints, not implementation intentions — they cannot be accidentally removed during development.
+</Note>
+
+---
+
+## Key Design Decisions
+
+<Accordion title="Why deterministic classification? (Art. III)">
+The risk level (`🟢/🟡/🔴/⚪`) is calculated by `classifier.py` using fixed numeric thresholds with no randomness and no AI inference. This satisfies **Article III** of the constitution: every classification decision must be explainable to a teacher or school director without technical expertise. A teacher can read the threshold table and reproduce any result manually.
+</Accordion>
+
+<Accordion title="Why is AI only used for text? (Art. IV)">
+**Article IV** prohibits any language that labels, blames, or stigmatises students. A rule-based template engine would produce repetitive, impersonal text. Gemini 2.0 Flash generates a unique explanation and recommendation per student while the `SYSTEM_PROMPT` enforces the language rules at the model level. The risk level itself never passes through the AI — only the motives and missing data do.
+</Accordion>
+
+<Accordion title="Why an offline cache? (Art. VIII)">
+According to BID (2024), 6 in 10 lower-income Peruvian students have no home internet. Teachers access the system from school premises where connectivity can also be intermittent. **Article VIII §6.1** makes the offline cache mandatory: `cache/respuestas_ia.json` contains pre-generated AI responses for every student so the dashboard always works, even with no active internet connection.
+</Accordion>
+
+<Accordion title="Why FastAPI?">
+FastAPI provides async request handling so that all students in the dataset can be processed in parallel on the first load (`asyncio.gather(*tareas)` in `main.py`). It also auto-generates interactive API documentation at `/docs`, which is useful for hackathon judges to explore the system.
+</Accordion>
+
+---
+
+## Architecture Pages
+
+<CardGroup cols={2}>
+  <Card
+    title="Risk Engine"
+    icon="shield-check"
+    href="/architecture/risk-engine"
+  >
+    Frozen thresholds, worst-case aggregation logic, and the full classification function — all from `classifier.py`.
+  </Card>
+  <Card
+    title="Gemini AI Integration"
+    icon="sparkles"
+    href="/architecture/ai-integration"
+  >
+    System prompt rules, user prompt construction, resilience flow, and the three `origen_ia` states.
+  </Card>
+  <Card
+    title="Offline Fallback"
+    icon="wifi-slash"
+    href="/architecture/offline-fallback"
+  >
+    Cache structure, lazy-loading, `guardar_en_cache`, and how to regenerate the cache.
+  </Card>
+  <Card
+    title="Project Constitution"
+    icon="scroll"
+    href="/architecture/overview"
+  >
+    The SDD rules that govern all architecture decisions in this system.
+  </Card>
+</CardGroup>

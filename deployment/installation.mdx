@@ -1,0 +1,155 @@
+---
+title: "Installing Vanguardia EPIS on Linux, macOS, or Windows"
+sidebarTitle: "Instalación"
+description: "Step-by-step guide to clone, install dependencies, and run Vanguardia EPIS on any device with Python 3.11+ and a Gemini API key."
+---
+
+Vanguardia EPIS is a FastAPI-based early-warning system for school dropout risk in Peruvian rural schools. It pairs a deterministic rule engine with Google Gemini AI and is designed to run on any machine — including those with limited or intermittent connectivity. This guide walks you through every step from cloning the repository to verifying the server is running correctly.
+
+## Prerequisites
+
+Before you begin, make sure the following are available on your machine:
+
+<CardGroup cols={3}>
+  <Card title="Python 3.11+" icon="python">
+    Required for all backend dependencies. Check with `python3 --version`.
+  </Card>
+  <Card title="pip" icon="box">
+    Python's package manager, bundled with Python 3.11+. Check with `pip --version`.
+  </Card>
+  <Card title="Gemini API Key" icon="key">
+    Free developer key from [Google AI Studio](https://aistudio.google.com/app/apikey). Required for live AI responses.
+  </Card>
+</CardGroup>
+
+## Installation Steps
+
+<Steps>
+  <Step title="Clone the repository">
+    Download the project from GitHub and navigate into the project root:
+
+    ```bash
+    git clone https://github.com/Pierrot-01/Hackathon_epis_2026.git
+    cd Hackathon_epis_2026
+    ```
+  </Step>
+
+  <Step title="Install Python dependencies">
+    Install all required packages from the `backend/requirements.txt` file:
+
+    ```bash
+    pip install -r backend/requirements.txt
+    ```
+
+    This installs the following packages:
+
+    | Package | Version | Purpose |
+    |---|---|---|
+    | `fastapi` | `>=0.115.0` | REST API framework |
+    | `uvicorn[standard]` | `>=0.30.0` | ASGI server for FastAPI |
+    | `google-genai` | `>=2.0.0` | Google Gemini AI client |
+    | `python-dotenv` | `>=1.0.0` | `.env` file loader |
+    | `pydantic` | `>=2.0.0` | Data validation and models |
+
+    <Note>
+      **Debian / Arch Linux users:** If your system Python is managed by the OS package manager and blocks global installs, add the `--break-system-packages` flag:
+
+      ```bash
+      pip install -r backend/requirements.txt --break-system-packages
+      ```
+
+      Alternatively, use a Python virtual environment (see [Optional: Virtual Environment](#optional-virtual-environment) below).
+    </Note>
+  </Step>
+
+  <Step title="Configure environment variables">
+    Create your `backend/.env` file from the provided template and add your Gemini API key:
+
+    ```bash
+    cp backend/.env.example backend/.env
+    ```
+
+    Then edit `backend/.env` with your key:
+
+    ```env
+    GEMINI_API_KEY=tu-api-key-de-gemini-aqui
+    ```
+
+    See the [Configuration](/deployment/configuration) page for all available options including the `PORT` variable and `start.sh` flags.
+  </Step>
+
+  <Step title="Pre-generate the AI cache (recommended)">
+    Before your first run — especially before a demo or offline session — pre-generate all Gemini AI responses into a local cache file. This step avoids rate-limit errors during live presentations:
+
+    ```bash
+    export GEMINI_API_KEY=tu-api-key-de-gemini-aqui
+    python3 generar_cache.py
+    ```
+
+    This saves responses to `cache/respuestas_ia.json`. See the [Cache Generation](/deployment/cache-generation) page for full details.
+  </Step>
+
+  <Step title="Start the server">
+    Use the automated startup script (Linux / macOS):
+
+    ```bash
+    ./start.sh
+    ```
+
+    Or start FastAPI directly from the `backend/` directory:
+
+    ```bash
+    cd backend && python3 main.py
+    ```
+
+    The server starts on port **8000** by default. Once running, the following URLs are available:
+
+    <CardGroup cols={3}>
+      <Card title="Main App" icon="house" href="http://localhost:8000">
+        `http://localhost:8000` — Login screen (index.html)
+      </Card>
+      <Card title="Monitoring Dashboard" icon="chart-line" href="http://localhost:8000/monitoreo.html">
+        `http://localhost:8000/monitoreo.html` — Interactive risk panel
+      </Card>
+      <Card title="API Docs" icon="book" href="http://localhost:8000/docs">
+        `http://localhost:8000/docs` — Swagger / OpenAPI reference
+      </Card>
+    </CardGroup>
+  </Step>
+</Steps>
+
+## Verifying the Installation
+
+After installation, validate the deterministic rule engine by running the built-in test suite:
+
+```bash
+python3 backend/classifier.py
+```
+
+Expected output:
+
+```
+✅ Todos los tests pasaron! (10/10)
+```
+
+This confirms that the risk classification logic (Art. III of the project constitution) is working correctly across all 10 canonical test cases. The classifier is fully deterministic — identical inputs will always produce identical outputs, independent of network or AI availability.
+
+## Optional: Virtual Environment
+
+If you prefer to isolate Vanguardia EPIS dependencies from your system Python, set up a virtual environment before running `pip install`:
+
+```bash
+# Create the virtual environment
+python3 -m venv .venv
+
+# Activate it (Linux / macOS)
+source .venv/bin/activate
+
+# Activate it (Windows PowerShell)
+.venv\Scripts\Activate.ps1
+
+# Install dependencies
+pip install -r backend/requirements.txt
+```
+
+Remember to activate the virtual environment each time you open a new terminal session before running `./start.sh` or `python3 main.py`.

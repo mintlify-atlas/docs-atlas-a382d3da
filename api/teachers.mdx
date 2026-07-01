@@ -1,0 +1,184 @@
+---
+title: "REST API Endpoints for Teacher Management"
+sidebarTitle: "Docentes"
+description: "Endpoints to list, create, update, and delete teacher records in Vanguardia EPIS. Teacher IDs are auto-incremented in DOC-XXX format."
+---
+
+The teacher endpoints manage the roster of educators registered in Vanguardia EPIS. Teacher records store contact information, subject assignment, and the grade level each teacher is responsible for. Unlike the student endpoints, teacher operations are synchronous (no AI involvement) and do not use the in-memory session cache — every request reads from and writes to `data/docentes.json` directly.
+
+---
+
+## GET /api/docentes
+
+Returns the complete list of registered teachers. If the `docentes.json` file does not exist when the server starts, it is automatically created as an empty array.
+
+### Response
+
+Returns an array of `DocenteResultado` objects. See the [DocenteResultado schema](#docenteresultado-response-object) below. Returns an empty array `[]` if no teachers have been registered yet.
+
+### Example
+
+```bash
+curl http://localhost:8000/api/docentes
+```
+
+```json
+[
+  {
+    "id": "DOC-002",
+    "nombre": "Carlos Ruíz",
+    "email": "carlos.ruiz@epis.edu",
+    "asignacion": "Tutoría 3° Sec",
+    "grado_clave": "3ro",
+    "estado": "Activo"
+  }
+]
+```
+
+---
+
+## POST /api/docentes
+
+Creates a new teacher record or updates an existing one. The result is immediately persisted to `data/docentes.json`.
+
+**Create mode** — omit the `id` field. The server scans existing teacher IDs, finds the highest `DOC-NNN` number, and assigns the next one. If no teachers exist yet, the first teacher receives `DOC-001`.
+
+**Update mode** — include the `id` field with an existing teacher ID. All fields are overwritten with the provided values. Returns `404` if the ID does not match any record.
+
+### Request Body
+
+<ParamField body="id" type="string">
+  Optional. If provided, the endpoint operates in update mode and replaces the matching teacher record. Must be an existing `DOC-NNN` ID. If omitted, a new ID is auto-generated.
+</ParamField>
+
+<ParamField body="nombre" type="string" required>
+  Full name of the teacher. Example: `"Carlos Ruíz"`.
+</ParamField>
+
+<ParamField body="email" type="string" required>
+  Institutional email address. Example: `"carlos.ruiz@epis.edu"`.
+</ParamField>
+
+<ParamField body="asignacion" type="string" required>
+  Subject or role assignment for this teacher. Example: `"Tutoría 3° Sec"`, `"Matemáticas 1° Sec"`.
+</ParamField>
+
+<ParamField body="grado_clave" type="string" required>
+  The grade level this teacher is assigned to, used to link teachers with their student cohort. Example: `"3ro"`, `"1ro"`, `"5to"`.
+</ParamField>
+
+<ParamField body="estado" type="string" default="Activo">
+  Employment status of the teacher. Defaults to `"Activo"`. Other values can be set freely, e.g. `"Inactivo"`, `"Con licencia"`.
+</ParamField>
+
+### Response
+
+Returns the full `DocenteResultado` object for the created or updated teacher.
+
+### Errors
+
+| Status | Detail |
+|--------|--------|
+| `404` | `"Docente no encontrado"` — an `id` was provided in update mode but no matching record exists in the dataset. |
+| `422` | Pydantic validation error — one or more required fields (`nombre`, `email`, `asignacion`, `grado_clave`) were missing from the request body. |
+
+### Example — Create
+
+```bash
+curl -X POST http://localhost:8000/api/docentes \
+  -H "Content-Type: application/json" \
+  -d '{
+    "nombre": "Lucía Mamani Torres",
+    "email": "lucia.mamani@epis.edu",
+    "asignacion": "Comunicación 2° Sec",
+    "grado_clave": "2do",
+    "estado": "Activo"
+  }'
+```
+
+```json
+{
+  "id": "DOC-003",
+  "nombre": "Lucía Mamani Torres",
+  "email": "lucia.mamani@epis.edu",
+  "asignacion": "Comunicación 2° Sec",
+  "grado_clave": "2do",
+  "estado": "Activo"
+}
+```
+
+### Example — Update
+
+```bash
+curl -X POST http://localhost:8000/api/docentes \
+  -H "Content-Type: application/json" \
+  -d '{
+    "id": "DOC-002",
+    "nombre": "Carlos Ruíz",
+    "email": "carlos.ruiz@epis.edu",
+    "asignacion": "Tutoría 3° Sec",
+    "grado_clave": "3ro",
+    "estado": "Con licencia"
+  }'
+```
+
+---
+
+## DELETE /api/docentes/:id\_docente
+
+Permanently removes a teacher record from `data/docentes.json`. This action cannot be undone through the API.
+
+<ParamField path="id_docente" type="string" required>
+  The ID of the teacher to delete, e.g. `DOC-002`.
+</ParamField>
+
+### Response
+
+```json
+{
+  "status": "success",
+  "message": "Docente DOC-002 eliminado"
+}
+```
+
+### Errors
+
+| Status | Detail |
+|--------|--------|
+| `404` | `"Docente no encontrado"` — the provided ID does not exist in the dataset. |
+
+### Example
+
+```bash
+curl -X DELETE http://localhost:8000/api/docentes/DOC-002
+```
+
+---
+
+## DocenteResultado Response Object
+
+Both `GET /api/docentes` and `POST /api/docentes` return `DocenteResultado` objects (array and single object, respectively).
+
+<ResponseField name="id" type="string" required>
+  Unique teacher identifier auto-generated in `DOC-NNN` format. Example: `"DOC-002"`. Zero-padded to three digits.
+</ResponseField>
+
+<ResponseField name="nombre" type="string" required>
+  Full name of the teacher. Example: `"Carlos Ruíz"`.
+</ResponseField>
+
+<ResponseField name="email" type="string" required>
+  Institutional email address. Example: `"carlos.ruiz@epis.edu"`.
+</ResponseField>
+
+<ResponseField name="asignacion" type="string" required>
+  Subject or role the teacher is assigned to. Example: `"Tutoría 3° Sec"`.
+</ResponseField>
+
+<ResponseField name="grado_clave" type="string" required>
+  The abbreviated grade level this teacher covers. Example: `"3ro"`. This key is used by the frontend to associate teachers with their student cohort on the dashboard.
+</ResponseField>
+
+<ResponseField name="estado" type="string" required>
+  Current employment status of the teacher. Example: `"Activo"`, `"Inactivo"`, `"Con licencia"`.
+</ResponseField>

@@ -1,0 +1,306 @@
+---
+title: "REST API Endpoints for Student Management"
+sidebarTitle: "Estudiantes"
+description: "CRUD endpoints for student records in Vanguardia EPIS. GET returns full risk classification and AI explanations. POST creates or updates student data."
+---
+
+The student endpoints are the core of the Vanguardia EPIS API. Every read operation runs the rule-based classifier and — on first load — calls the AI explanation service to produce a plain-language description of why a student is at risk and what the school should do. All write operations (`POST`, `DELETE`) immediately update the JSON dataset on disk and synchronize the in-memory session cache.
+
+---
+
+## GET /api/estudiantes
+
+Lists every student in the dataset, enriched with their risk classification and AI-generated explanation.
+
+On the **first call** the server processes all students in parallel: it runs `clasificar_estudiante()` on each record and calls the AI provider via `generar_explicacion()`. This may take several seconds depending on the number of students and AI response time. All subsequent calls return the results from the in-memory session cache instantly, unless `force_refresh=true` is passed.
+
+<ParamField query="force_refresh" type="boolean" default="false">
+  When `true`, bypasses the in-memory session cache and reprocesses every student from scratch, calling the classifier and AI service again. Use this after bulk edits or when you need up-to-date AI explanations.
+</ParamField>
+
+### Response
+
+Returns an array of `EstudianteResultado` objects. See the [EstudianteResultado schema](#estudianteresultado-response-object) below for all fields.
+
+### Example
+
+```bash
+# First call — may be slow (AI is invoked)
+curl http://localhost:8000/api/estudiantes
+
+# Subsequent call — instant from cache
+curl http://localhost:8000/api/estudiantes
+
+# Force a full refresh
+curl "http://localhost:8000/api/estudiantes?force_refresh=true"
+```
+
+```json
+[
+  {
+    "id": "EST-001",
+    "nombre": "María Quispe Huamán",
+    "grado": "3ro de secundaria",
+    "nivel_riesgo": "🟢",
+    "motivos": [],
+    "variables_faltantes": [],
+    "explicacion": "María muestra indicadores sólidos: asistencia del 95% y promedio de 15.5. Se recomienda mantener el seguimiento periódico.",
+    "recomendacion": "Continuar con el acompañamiento regular y reconocer su desempeño positivo.",
+    "origen_ia": "vivo",
+    "asistencia_pct": 95.0,
+    "notas_promedio": 15.5,
+    "participacion": "alta",
+    "lengua_materna": "castellano",
+    "observaciones": null
+  },
+  {
+    "id": "EST-002",
+    "nombre": "Jhon Huamán Torres",
+    "grado": "2do de secundaria",
+    "nivel_riesgo": "🔴",
+    "motivos": ["Asistencia crítica (60%)", "Promedio reprobatorio (9.5)", "Participación baja"],
+    "variables_faltantes": [],
+    "explicacion": "Jhon acumula tres factores de riesgo simultáneos. Sus inasistencias consecutivas y el bajo rendimiento académico indican riesgo inminente de abandono.",
+    "recomendacion": "Activar protocolo de visita domiciliaria y derivar al servicio de tutoría prioritaria.",
+    "origen_ia": "vivo",
+    "asistencia_pct": 60.0,
+    "notas_promedio": 9.5,
+    "participacion": "baja",
+    "lengua_materna": "quechua",
+    "observaciones": "Múltiples inasistencias consecutivas reportadas."
+  }
+]
+```
+
+---
+
+## GET /api/estudiantes/:id\_estudiante
+
+Returns the risk profile for a single student. If the student is already in the session cache, it is returned immediately. Otherwise the server loads the dataset, finds the matching record, runs the classifier and AI service, stores the result in cache, and returns it.
+
+<ParamField path="id_estudiante" type="string" required>
+  The student's unique identifier, e.g. `EST-001`. Case-sensitive.
+</ParamField>
+
+<ParamField query="force_refresh" type="boolean" default="false">
+  When `true`, reprocesses the student even if a cached result exists. Useful after editing a student's data via `POST /api/estudiantes`.
+</ParamField>
+
+### Errors
+
+| Status | Detail |
+|--------|--------|
+| `404` | `"Estudiante 'EST-999' no encontrado en el dataset."` — the provided ID does not match any record. |
+
+### Example
+
+```bash
+curl http://localhost:8000/api/estudiantes/EST-002
+```
+
+```json
+{
+  "id": "EST-002",
+  "nombre": "Jhon Huamán Torres",
+  "grado": "2do de secundaria",
+  "nivel_riesgo": "🔴",
+  "motivos": ["Asistencia crítica (60%)", "Promedio reprobatorio (9.5)", "Participación baja"],
+  "variables_faltantes": [],
+  "explicacion": "Jhon acumula tres factores de riesgo simultáneos.",
+  "recomendacion": "Activar protocolo de visita domiciliaria y derivar al servicio de tutoría prioritaria.",
+  "origen_ia": "vivo",
+  "asistencia_pct": 60.0,
+  "notas_promedio": 9.5,
+  "participacion": "baja",
+  "lengua_materna": "quechua",
+  "observaciones": "Múltiples inasistencias consecutivas reportadas."
+}
+```
+
+---
+
+## POST /api/estudiantes
+
+Creates a new student record or updates an existing one, then immediately classifies the student and generates an AI explanation. The result is persisted to `data/estudiantes.json` and stored in the session cache.
+
+**Create mode** — omit the `id` field. The server scans existing IDs, finds the highest `EST-NNN` number, and assigns the next one (e.g., if the highest is `EST-020`, the new student receives `EST-021`).
+
+**Update mode** — include the `id` field with an existing student ID. All fields are overwritten with the provided values. Returns `404` if the ID does not exist.
+
+### Request Body
+
+<ParamField body="id" type="string">
+  Optional. If provided, the endpoint operates in update mode and overwrites the matching student record. Must match an existing `EST-NNN` ID. If omitted, a new ID is auto-generated.
+</ParamField>
+
+<ParamField body="nombre" type="string" required>
+  Full name of the student. Example: `"Rosa Sulca Martínez"`.
+</ParamField>
+
+<ParamField body="grado" type="string" required>
+  School grade. Example: `"1ro de secundaria"`, `"3ro de secundaria"`.
+</ParamField>
+
+<ParamField body="asistencia_pct" type="float">
+  Attendance percentage on a 0–100 scale. Example: `78.5`. May be `null` if data is unavailable — the classifier will flag this as a missing variable.
+</ParamField>
+
+<ParamField body="notas_promedio" type="float">
+  Grade point average on the Peruvian vigesimal (0–20) scale. Example: `14.0`. May be `null` if no grades have been recorded this term.
+</ParamField>
+
+<ParamField body="participacion" type="string">
+  Classroom participation level. Accepted values: `"alta"`, `"media"`, `"baja"`. May be `null`.
+</ParamField>
+
+<ParamField body="lengua_materna" type="string" default="castellano">
+  Student's native language. Common values in the dataset: `"castellano"`, `"quechua"`. Defaults to `"castellano"` when omitted.
+</ParamField>
+
+<ParamField body="observaciones" type="string">
+  Free-text notes from the tutor or teacher. Example: `"Ausentismo reportado frecuentemente los lunes."`. May be `null`.
+</ParamField>
+
+### Response
+
+Returns the full `EstudianteResultado` object for the created or updated student, including the freshly computed `nivel_riesgo`, `motivos`, and AI-generated `explicacion`.
+
+### Errors
+
+| Status | Detail |
+|--------|--------|
+| `404` | `"Estudiante no encontrado"` — an `id` was provided in update mode but no matching record exists. |
+| `422` | Pydantic validation error — `nombre` or `grado` was missing from the request body. |
+
+### Example — Create
+
+```bash
+curl -X POST http://localhost:8000/api/estudiantes \
+  -H "Content-Type: application/json" \
+  -d '{
+    "nombre": "Carmen Quispe Llanos",
+    "grado": "2do de secundaria",
+    "asistencia_pct": 74,
+    "notas_promedio": 11.0,
+    "participacion": "baja",
+    "lengua_materna": "quechua",
+    "observaciones": "Derivada por tutora de aula."
+  }'
+```
+
+### Example — Update
+
+```bash
+curl -X POST http://localhost:8000/api/estudiantes \
+  -H "Content-Type: application/json" \
+  -d '{
+    "id": "EST-014",
+    "nombre": "Erick Vargas Díaz",
+    "grado": "1ro de secundaria",
+    "asistencia_pct": 78,
+    "notas_promedio": 11.5,
+    "participacion": "media",
+    "lengua_materna": "castellano",
+    "observaciones": "Recuperación académica en curso."
+  }'
+```
+
+---
+
+## DELETE /api/estudiantes/:id\_estudiante
+
+Permanently removes a student record from `data/estudiantes.json` and evicts the student from the in-memory session cache. This action cannot be undone through the API.
+
+<ParamField path="id_estudiante" type="string" required>
+  The ID of the student to delete, e.g. `EST-014`.
+</ParamField>
+
+### Response
+
+```json
+{
+  "status": "success",
+  "message": "Estudiante EST-014 eliminado"
+}
+```
+
+### Errors
+
+| Status | Detail |
+|--------|--------|
+| `404` | `"Estudiante no encontrado"` — the provided ID does not exist in the dataset. |
+
+### Example
+
+```bash
+curl -X DELETE http://localhost:8000/api/estudiantes/EST-014
+```
+
+---
+
+## EstudianteResultado Response Object
+
+All student read endpoints and `POST /api/estudiantes` return a single `EstudianteResultado` object (or an array of them for `GET /api/estudiantes`).
+
+<ResponseField name="id" type="string" required>
+  Unique student identifier in `EST-NNN` format. Example: `"EST-007"`.
+</ResponseField>
+
+<ResponseField name="nombre" type="string" required>
+  Full name of the student. Example: `"Lucía Benites Ríos"`.
+</ResponseField>
+
+<ResponseField name="grado" type="string" required>
+  School grade. Example: `"5to de secundaria"`.
+</ResponseField>
+
+<ResponseField name="nivel_riesgo" type="string" required>
+  Risk classification emoji. One of four values:
+
+  | Value | Meaning |
+  |-------|---------|
+  | `🟢` | Low risk — all indicators are within acceptable thresholds. |
+  | `🟡` | Medium risk — one or more indicators are borderline. |
+  | `🔴` | High risk — critical indicators detected; intervention recommended. |
+  | `⚪` | Insufficient data — too many variables are missing to classify. |
+</ResponseField>
+
+<ResponseField name="motivos" type="string[]" required>
+  Ordered list of rule-based reasons that contributed to the risk classification. Each entry is a human-readable string. Example: `["Asistencia crítica (60%)", "Promedio reprobatorio (9.5)", "Participación baja"]`. Empty array `[]` when risk is low or data is insufficient.
+</ResponseField>
+
+<ResponseField name="variables_faltantes" type="string[]" required>
+  List of data fields that were `null` or missing at classification time. Example: `["asistencia_pct", "participacion"]`. Used to prompt data-entry staff to complete student records.
+</ResponseField>
+
+<ResponseField name="explicacion" type="string | null">
+  Plain-language AI-generated explanation of the student's risk situation, tailored to their specific indicators and context. `null` when `origen_ia` is `"error_sin_cache"` or `"no_aplica"`.
+</ResponseField>
+
+<ResponseField name="recomendacion" type="string | null">
+  AI-generated actionable recommendation for the school or tutor. `null` under the same conditions as `explicacion`.
+</ResponseField>
+
+<ResponseField name="origen_ia" type="string" required>
+  Source of the AI explanation. See the [origen\_ia reference](/api/overview#the-origen_ia-field) in the overview for the full value table. One of: `"vivo"`, `"fallback"`, `"error_sin_cache"`, `"no_aplica"`.
+</ResponseField>
+
+<ResponseField name="asistencia_pct" type="float | null">
+  Attendance percentage (0–100) as stored in the dataset. Passed through from the raw record — not re-computed by the API.
+</ResponseField>
+
+<ResponseField name="notas_promedio" type="float | null">
+  Grade point average on the 0–20 vigesimal scale. `null` if no grades were recorded.
+</ResponseField>
+
+<ResponseField name="participacion" type="string | null">
+  Classroom participation level: `"alta"`, `"media"`, or `"baja"`. `null` if not recorded.
+</ResponseField>
+
+<ResponseField name="lengua_materna" type="string | null">
+  Student's native language. Typically `"castellano"` or `"quechua"`.
+</ResponseField>
+
+<ResponseField name="observaciones" type="string | null">
+  Free-text observations from the tutor. `null` when no notes have been entered.
+</ResponseField>

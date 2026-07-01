@@ -1,0 +1,105 @@
+---
+title: "Login Page: Accessing the Vanguardia EPIS Dashboard"
+sidebarTitle: "Login"
+description: "The Vanguardia EPIS login page authenticates teachers and admins before granting access to the monitoring and administration panels."
+---
+
+The Vanguardia EPIS login page is the entry point for all authorized school personnel. Served directly at the application root, it presents the **Horizontes Educativos** branding and a clean credential form that routes each user to the correct panel based on their role — teachers land on the monitoring panel, while administrators are taken to the institutional dashboard.
+
+## URL
+
+```
+http://localhost:8000/
+```
+
+The root route is handled by FastAPI's `FileResponse`, which reads `frontend/index.html` directly from disk:
+
+```python
+@app.get("/")
+def root():
+    return FileResponse(str(FRONTEND_DIR / "index.html"))
+```
+
+All other `.html` pages are served via a matching wildcard route:
+
+```python
+@app.get("/{page}.html")
+def pagina(page: str):
+    filepath = FRONTEND_DIR / f"{page}.html"
+    if filepath.exists():
+        return FileResponse(str(filepath))
+    raise HTTPException(status_code=404, detail="Página no encontrada")
+```
+
+The entire `frontend/` directory is also mounted under `/static` via FastAPI's `StaticFiles` middleware, making CSS, fonts, and assets available at that prefix.
+
+---
+
+## Visual Design
+
+The login page uses a **light theme** (`<html class="light">`) with a Material Design 3–inspired color token system built on Tailwind CSS. Key design elements include:
+
+- A centered card on a soft `bg-surface` background (`#f7fafc`)
+- A circular avatar tile with a filled `school` icon rendered in `bg-primary-container` blue
+- The institution name **"Horizontes Educativos"** in `text-primary` (`#005a71`) at headline-md scale
+- A subtitle: **"Portal de Detección Temprana"**
+- Input fields with left-side Material Symbol icons (`mail`, `lock`) and `focus:ring-primary` highlight rings
+- A full-width, pill-shaped **"Iniciar Sesión"** submit button in `bg-primary`
+- A "¿Olvidaste tu contraseña?" link (placeholder, no backend route)
+
+---
+
+## Demo Credentials
+
+The login page displays hardcoded demo credentials in the informational footer beneath the form:
+
+| Role | Email |
+|------|-------|
+| Admin | `admin@escuela.edu.pe` |
+| Docente | `docente@escuela.edu.pe` |
+
+<Note>
+  No password is validated server-side in the current demo build. The form only reads the **email** field to determine the redirect target. Any non-empty password input will pass the client-side `required` check.
+</Note>
+
+---
+
+## Authentication Flow
+
+<Steps>
+  <Step title="User submits the form">
+    The `#loginForm` submit handler fires, preventing the default browser POST. The button switches to a loading state — it displays a spinning `progress_activity` icon and reads **"Verificando…"** — and is disabled for 800 ms to simulate a server round-trip.
+  </Step>
+  <Step title="Role detected from email">
+    The email value is checked with a simple `includes('admin')` string test:
+
+    ```javascript
+    if (email.toLowerCase().includes('admin')) {
+        window.location.href = '/admin.html';
+    } else {
+        window.location.href = '/monitoreo.html';
+    }
+    ```
+  </Step>
+  <Step title="Redirect to the appropriate panel">
+    - Emails containing `"admin"` → `/admin.html` (Institutional Dashboard)
+    - All other emails → `/monitoreo.html` (Teacher Monitoring Panel)
+  </Step>
+</Steps>
+
+<Warning>
+  Authentication is entirely client-side. The redirect logic runs in the browser without any server token, session cookie, or JWT. Do not use this mechanism in a production environment — integrate a proper authentication backend before deployment.
+</Warning>
+
+---
+
+## Navigation Map
+
+<CardGroup cols={2}>
+  <Card title="Panel de Monitoreo" icon="person-search" href="/frontend/monitoring">
+    Default destination for teachers (`docente@escuela.edu.pe`). Shows all students with live risk-level badges.
+  </Card>
+  <Card title="Panel Administrativo" icon="chart-bar" href="/frontend/admin">
+    Destination for admin users (`admin@escuela.edu.pe`). Shows institution-wide metrics, teacher roster, and critical alerts.
+  </Card>
+</CardGroup>

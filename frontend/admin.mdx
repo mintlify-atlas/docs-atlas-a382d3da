@@ -1,0 +1,203 @@
+---
+title: "Administration Panel: Manage Students and Teachers"
+sidebarTitle: "Administración"
+description: "The admin panel provides institution-wide statistics, student CRUD management, and teacher registration for Vanguardia EPIS."
+---
+
+The administration panel is designed for school directors and coordinators who need an institution-wide view of risk distribution across grades. Unlike the monitoring panel — which focuses on per-student pedagogical detail — the admin panel surfaces aggregate metrics, a stacked bar chart grouped by school year, a real-time alert feed, and full CRUD tools for managing students and teachers.
+
+## URL
+
+```
+http://localhost:8000/admin.html
+```
+
+---
+
+## Page Header and Layout
+
+The page is titled **"Resumen Institucional"** with the breadcrumb `Administración › Resumen Institucional`. A sticky top navbar carries the **"Vanguardia EPIS"** wordmark and horizontal tab links to all main sections on medium-and-up screens. A collapsible mobile sidebar drawer is toggled via a hamburger button.
+
+An **"Actualizar Datos"** button in the top-right triggers `cargarDatosAdmin(true)`, which calls `GET /api/estudiantes?force_refresh=true` and rerenders all dashboard sections.
+
+---
+
+## Global Statistics Dashboard
+
+On page load, `cargarDatosAdmin()` fetches all students from `GET /api/estudiantes` and computes the following metrics:
+
+### Risk Count Summary
+
+The right-hand **"Resumen de Alertas"** card displays live counts for each risk level:
+
+| Risk Level | ID | Color |
+|------------|-----|-------|
+| Riesgo Alto 🔴 | `count-alto` | `text-risk-high` |
+| Riesgo Medio 🟡 | `count-medio` | `text-risk-medium` |
+| Riesgo Bajo 🟢 | `count-bajo` | `text-risk-low` |
+| Dato Insuficiente ⚪ | `count-insuficiente` | `text-data-missing` |
+
+### Intervention Efficiency Card
+
+A full-width primary-colored card displays **"Eficiencia de Intervención"**: the percentage of students classified as 🟢 BAJO risk out of all evaluated students. A thin animated progress bar fills proportionally.
+
+```javascript
+const pctBajo = total > 0 ? Math.round((bajo / total) * 100) : 0;
+document.getElementById('efficiency-value').textContent = `${pctBajo}%`;
+document.getElementById('efficiency-bar').style.width = `${pctBajo}%`;
+```
+
+### Risk Distribution Chart by Grade
+
+A stacked bar chart (`#stacked-chart`) renders one column per school year — from **1ro de secundaria** through **5to de secundaria**. Each bar is divided into four colored segments:
+
+| Segment (bottom to top) | Color Token | Risk |
+|-------------------------|-------------|------|
+| `bg-risk-low` | `#22C55E` | 🟢 Bajo |
+| `bg-risk-medium` | `#F59E0B` | 🟡 Medio |
+| `bg-risk-high` | `#EF4444` | 🔴 Alto |
+| `bg-data-missing` | `#94A3B8` | ⚪ Insuficiente |
+
+Segments are sized proportionally using inline `style="height: {pct}%"`. Each bar segment shows a tooltip on hover with the exact count and percentage.
+
+### Critical Alerts Engine Feed
+
+The **"Alertas del Motor"** panel lists every student with `nivel_riesgo === '🔴'` as a card row. Each row shows:
+- A vertical red left-border accent strip
+- Student name and ID
+- Grade and the first `motivos` entry (emoji stripped)
+
+Clicking any alert navigates to `/monitoreo.html?id={est.id}`. If no critical students exist, the badge changes from **"Crítico"** to **"Estable"** (green) and a check-circle message is shown. A footer link — **"Monitorear todos los casos"** — navigates to the full monitoring panel.
+
+<Note>
+  A fallback warning banner (`#fallback-warning`) is shown automatically if any student's `origen_ia` field equals `"fallback"`, indicating that some AI explanations come from the response cache rather than live Gemini calls.
+</Note>
+
+---
+
+## Teacher Management
+
+The lower-right section of the admin panel is titled **"Gestión de Plantilla Docente"**. It displays a table of all registered teachers, populated by `GET /api/docentes`.
+
+### Teacher Table Columns
+
+| Column | Content |
+|--------|---------|
+| **Docente / Tutor** | Avatar icon, full name, institutional email |
+| **Asignación** | Free-text assignment label (e.g., *"Tutoría 4° Sec"*) |
+| **Tasa Crítica** | Count of high-risk students in the teacher's assigned grade, with a proportional red progress bar |
+| **Estado** | `Activo` (green dot) or `Inactivo` (slate dot) |
+| **Acciones** | Edit, delete, and view-detail icon buttons |
+
+### Adding or Editing a Teacher
+
+A **"Registrar Docente"** button above the table opens a centered modal dialog. The same modal is reused for editing (pre-populated via `abrirModalDocente(id)`).
+
+**Teacher form fields:**
+
+<Steps>
+  <Step title="Nombre Completo">
+    Required text input. Full name of the teacher.
+  </Step>
+  <Step title="Correo Institucional">
+    Required email input. Institutional address used for contact notifications.
+  </Step>
+  <Step title="Asignación">
+    Required text input. Describes the teacher's tutoring assignment (e.g., *"Tutoría 4° Sec"*).
+  </Step>
+  <Step title="Grado Clave">
+    Required `<select>` dropdown. Associates the teacher with a school year for metric calculations:
+    - `1ro`, `2do`, `3ro`, `4to`, `5to` (de Secundaria)
+  </Step>
+  <Step title="Estado">
+    Required `<select>` dropdown. Either **"Activo"** or **"Inactivo"**.
+  </Step>
+</Steps>
+
+On submit, the form calls `POST /api/docentes` with the payload:
+
+```json
+{
+  "id": null,
+  "nombre": "María García",
+  "email": "m.garcia@escuela.edu.pe",
+  "asignacion": "Tutoría 3° Sec",
+  "grado_clave": "3ro",
+  "estado": "Activo"
+}
+```
+
+When editing, `id` is set to the existing teacher's ID string (e.g., `"DOC-001"`). The backend auto-generates IDs in the format `DOC-{NNN}` for new records.
+
+### Deleting a Teacher
+
+Each row has a delete button that calls `DELETE /api/docentes/{id}` after a browser `confirm()` prompt.
+
+---
+
+## Teacher Detail Side-Sheet
+
+Clicking any teacher row (or the external-link icon) slides in a right-anchored side-sheet panel. It shows:
+
+- Avatar placeholder icon
+- Teacher name and assignment
+- **Métricas de Grado**: total students in the assigned grade and count in high risk
+- **Insight de IA (Admin)**: a dynamically generated sentence (computed client-side, not from Gemini) summarizing the teacher's critical-student resolution rate
+- **Alumno Crítico Asignado**: list of all 🔴 students in the teacher's grade, each linking to `/monitoreo.html?id={est.id}`
+- A **"Contactar Tutor"** button that fires a `window.alert()` confirming a notification was sent
+
+---
+
+## Student Management (estudiantes.html)
+
+Student creation and editing is delegated to a dedicated page served at `/estudiantes.html`. It is linked from the monitoring panel's detail side panel ("Editar Ficha Estudiante" button) and from the sidebar's **"Estudiantes"** nav link.
+
+**Student form fields:**
+
+| Field | Input Type | Notes |
+|-------|------------|-------|
+| `nombre` | Text | Full name; required |
+| `grado` | Select | 1ro–5to de secundaria; required |
+| `asistencia_pct` | Number (0–100) | Monthly attendance %; nullable |
+| `notas_promedio` | Number (0–20) | Academic average; nullable |
+| `participacion` | Radio group | `alta`, `media`, `baja`, or empty (unregistered) |
+| `lengua_materna` | Not in form UI | Defaults to `"castellano"` in the API payload |
+| `observaciones` | Not in form UI | Passed as `null` unless set via direct API call |
+
+The form also contains a **"Seleccionar Estudiante para Editar"** dropdown that loads all existing students from `GET /api/estudiantes` on page load. Selecting a student pre-fills all fields and switches the page title to `"Ficha de {nombre}"`. Selecting the blank `"-- Crear Nuevo Estudiante --"` option resets the form for a new record.
+
+On save, the form calls `POST /api/estudiantes`. The backend auto-generates IDs in the format `EST-{NNN}` for new students.
+
+<Tip>
+  Attendance and grade thresholds are shown inline as helper text beneath each field:
+  - **Asistencia**: 🟢 ≥90% | 🟡 75–89% | 🔴 &lt;75%
+  - **Promedio**: 🟢 ≥13 | 🟡 11–12 | 🔴 &lt;11
+</Tip>
+
+---
+
+## How Admin Differs from the Monitoring Panel
+
+| Feature | Monitoring Panel | Admin Panel |
+|---------|-----------------|-------------|
+| **Primary user** | Classroom teacher | School director / coordinator |
+| **Focus** | Individual student risk detail + AI recommendation | Institution-wide aggregate metrics + alerts |
+| **AI content** | Full Gemini explanations and recommendations per student | Computed client-side insight for teacher performance |
+| **Data mutation** | Read-only (navigates to estudiantes.html to edit) | Teacher CRUD via modal, links to student CRUD |
+| **Chart** | Stat cards (count per risk level) | Stacked bar chart grouped by school grade |
+| **Alert feed** | None | Real-time engine alerts listing all 🔴 students |
+
+---
+
+## Sidebar Navigation
+
+The admin panel uses a two-tier navigation: a fixed top navbar with horizontal links and a fixed left sidebar on desktop. Both expose the same four destinations:
+
+| Label | Icon | Path |
+|-------|------|------|
+| **Métricas Globales** (current) | `analytics` | `/admin.html` |
+| Monitoreo | `person_search` | `/monitoreo.html` |
+| Reportes y Planes | `history_edu` | `/reportes.html` |
+| Estudiantes | `group` | `/estudiantes.html` |
+
+A **"Cerrar Sesión"** link at the bottom of the sidebar navigates to `/`.

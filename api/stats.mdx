@@ -1,0 +1,119 @@
+---
+title: "GET /api/stats — Global Risk Distribution Statistics"
+sidebarTitle: "Estadísticas"
+description: "GET /api/stats returns total students and risk level counts and percentages. Uses in-memory cache if available, otherwise runs quick classification."
+---
+
+The `/api/stats` endpoint aggregates student risk classifications into a compact summary used by the `admin.html` dashboard to populate the four top-level statistics cards: total students, high risk count, medium risk count, and low risk count. It is designed to be fast regardless of dataset size.
+
+---
+
+## GET /api/stats
+
+Returns global risk-level counts and percentages for all students in the dataset. No parameters are required.
+
+### Caching Behavior
+
+The endpoint checks whether the in-memory session cache (`_resultados_cache`) is populated:
+
+- **Cache available** — reads `nivel_riesgo` directly from the cached `EstudianteResultado` objects. This is essentially instantaneous.
+- **Cache empty** — loads the full dataset from `data/estudiantes.json` and runs `clasificar_estudiante()` on each record synchronously, **without** calling the AI service. This makes the cold-start path significantly faster than `GET /api/estudiantes`, at the cost of not populating the AI explanation cache.
+
+In both cases the counts and percentages returned are consistent with the classifier's current rule set.
+
+### Response Fields
+
+<ResponseField name="total" type="integer" required>
+  Total number of student records in the dataset. Example: `20`.
+</ResponseField>
+
+<ResponseField name="alto" type="integer" required>
+  Count of students classified as 🔴 high risk.
+</ResponseField>
+
+<ResponseField name="medio" type="integer" required>
+  Count of students classified as 🟡 medium risk.
+</ResponseField>
+
+<ResponseField name="bajo" type="integer" required>
+  Count of students classified as 🟢 low risk.
+</ResponseField>
+
+<ResponseField name="insuficiente" type="integer" required>
+  Count of students classified as ⚪ insufficient data — too many variables were `null` to produce a meaningful risk level.
+</ResponseField>
+
+<ResponseField name="pct_alto" type="float" required>
+  Percentage of students at 🔴 high risk, rounded to one decimal place. Calculated as `alto / total * 100`. Returns `0` if `total` is `0`.
+</ResponseField>
+
+<ResponseField name="pct_medio" type="float" required>
+  Percentage of students at 🟡 medium risk, rounded to one decimal place.
+</ResponseField>
+
+<ResponseField name="pct_bajo" type="float" required>
+  Percentage of students at 🟢 low risk, rounded to one decimal place.
+</ResponseField>
+
+### Example
+
+```bash
+curl http://localhost:8000/api/stats
+```
+
+```json
+{
+  "total": 20,
+  "alto": 4,
+  "medio": 7,
+  "bajo": 7,
+  "insuficiente": 2,
+  "pct_alto": 20.0,
+  "pct_medio": 35.0,
+  "pct_bajo": 35.0
+}
+```
+
+<Note>
+  `pct_alto + pct_medio + pct_bajo` will not equal 100% when `insuficiente > 0`, because ⚪ students are counted in `total` but not included in any percentage field.
+</Note>
+
+### Dashboard Integration
+
+The `admin.html` frontend calls `GET /api/stats` on page load to populate the summary statistics cards at the top of the administration view. Because the stats endpoint uses the classifier-only fast path when the cache is cold, these cards load quickly even on a fresh server start — before the full AI-enriched student list has been fetched.
+
+---
+
+## GET /api/health
+
+The health endpoint provides a simple liveness check for the server. It is typically called on startup to confirm the API is running before the frontend attempts any data requests.
+
+No parameters are required.
+
+### Response
+
+```json
+{
+  "status": "ok",
+  "version": "1.0.0"
+}
+```
+
+<ResponseField name="status" type="string" required>
+  Always `"ok"` when the server is running and able to handle requests.
+</ResponseField>
+
+<ResponseField name="version" type="string" required>
+  Current API version string. Value: `"1.0.0"`.
+</ResponseField>
+
+### Example
+
+```bash
+curl http://localhost:8000/api/health
+```
+
+This endpoint is safe to call repeatedly — it performs no I/O and returns in under 1 ms. Use it for:
+- **Startup probes**: confirm the server is ready before loading the dashboard.
+- **Health monitoring**: integrate with process managers (e.g., systemd, PM2) or uptime monitors to detect server crashes.
+- **Development**: quickly verify the API is reachable after a code change or restart.

@@ -1,0 +1,158 @@
+---
+title: "Analytical Reports and Student Listings"
+sidebarTitle: "Reportes"
+description: "The reports page provides analytical views of risk distribution, full student listings, and exportable summaries for institutional oversight."
+---
+
+The reports page is designed for directors and coordinators who need a broad, at-a-glance view of academic risk across the entire student cohort. It combines a live summary stats strip, an interactive horizontal bar chart for risk distribution, and a full sortable student listing — all sourced in real time from the backend's classification engine.
+
+## URL
+
+```
+http://localhost:8000/reportes.html
+```
+
+---
+
+## Data Loading
+
+On page load, the reports page makes two parallel requests:
+
+```javascript
+const [estudiantesResp, statsResp] = await Promise.all([
+    fetch(`${API_BASE}/api/estudiantes`),
+    fetch(`${API_BASE}/api/stats`),
+]);
+```
+
+| Endpoint | Used For |
+|----------|----------|
+| `GET /api/estudiantes` | Full student listing with `nombre`, `id`, `grado`, `nivel_riesgo`, `motivos`, `origen_ia` |
+| `GET /api/stats` | Aggregate counts and percentages: `total`, `alto`, `medio`, `bajo`, `insuficiente`, `pct_alto`, `pct_medio`, `pct_bajo` |
+
+An **"Actualizar Datos"** button in the top navbar bar manually re-triggers `cargarReportes()`, spinning the `refresh` icon while the request is in flight. If the backend is unreachable, the stats grid renders a `cloud_off` error state with a **"Reintentar"** button.
+
+---
+
+## Information Banner
+
+At the top of the content area, an informational banner clarifies the data source:
+
+> **Datos Procesados por Motor de Reglas (Art. III)**
+> Las clasificaciones son deterministas y auditables. El porcentaje se calcula sobre el total de estudiantes activos en el dataset.
+
+<Note>
+  All risk classifications on this page come from the same deterministic rules engine used throughout the system — not from AI inference. The `origen_ia` field indicates AI participation separately in the full student listing.
+</Note>
+
+---
+
+## Summary Stats Strip
+
+Four stat cards render across a responsive grid (2 columns on mobile, 4 on desktop):
+
+<CardGroup cols={2}>
+  <Card title="Total" icon="users">
+    Total number of active students in the dataset. Sourced from `stats.total`.
+  </Card>
+  <Card title="Alto 🔴" icon="triangle-exclamation">
+    Count of high-risk students with percentage in parentheses. Left border accent in `risk-high` red. Sourced from `stats.alto` and `stats.pct_alto`.
+  </Card>
+  <Card title="Medio 🟡" icon="circle-exclamation">
+    Count and percentage of medium-risk students. Left border in `risk-medium` amber. Sourced from `stats.medio` and `stats.pct_medio`.
+  </Card>
+  <Card title="Bajo 🟢" icon="circle-check">
+    Count and percentage of low-risk students. Left border in `risk-low` green. Sourced from `stats.bajo` and `stats.pct_bajo`.
+  </Card>
+</CardGroup>
+
+---
+
+## Risk Distribution Bars
+
+The **"Distribución de Riesgo por Estudiante"** section renders one horizontal bar per risk level. Each bar is proportionally sized by percentage relative to the total student count.
+
+```javascript
+const niveles = [
+    { label: '🟢 Bajo',   count: stats.bajo,         pct: stats.pct_bajo   },
+    { label: '🟡 Medio',  count: stats.medio,        pct: stats.pct_medio  },
+    { label: '🔴 Alto',   count: stats.alto,          pct: stats.pct_alto   },
+    { label: '⚪ Insuf.', count: stats.insuficiente,  pct: Math.round(stats.insuficiente / total * 100) },
+];
+```
+
+Each bar row shows:
+- A **28-character label** on the left (emoji + level name)
+- A proportional filled bar using the risk-level color token (`bg-risk-low`, `bg-risk-medium`, `bg-risk-high`, `bg-data-missing`)
+- A right-aligned **count (percentage%)** label in the matching text color
+
+Bars animate on load via a `fade-in` class. The minimum rendered width is `1%` to keep zero-count levels visible.
+
+A legend in the section header provides color swatches for all four levels.
+
+---
+
+## Full Student Listing
+
+The **"Detalle Completo — Todos los Estudiantes"** section below the distribution bars renders a full `<table>` of every student, sorted by risk severity:
+
+```javascript
+const orden = { '🔴': 0, '🟡': 1, '⚪': 2, '🟢': 3 };
+const ordenados = [...estudiantes].sort((a, b) =>
+    (orden[a.nivel_riesgo] ?? 4) - (orden[b.nivel_riesgo] ?? 4)
+);
+```
+
+High-risk students appear at the top; low-risk students at the bottom.
+
+### Table Columns
+
+| Column | Content | Visibility |
+|--------|---------|------------|
+| **Estudiante** | Bold name, `{id} • {grado}` sub-label | Always visible |
+| **Riesgo** | Pill badge with emoji + level label, background tint | Always visible |
+| **Motivo Principal** | First entry from `motivos` array, emoji stripped, italicized | Desktop only (`md:table-cell`) |
+| **Origen IA** | Source badge (see below) | Desktop only (`md:table-cell`) |
+
+### `origen_ia` Badges in the Listing
+
+The full listing surfaces the AI data-source flag for each student as a colored micro-badge:
+
+| `origen_ia` Value | Badge Text | Style |
+|-------------------|------------|-------|
+| `"vivo"` | **EN VIVO** | Green background, `text-risk-low` |
+| `"fallback"` | **RESPALDO** | Amber background, `text-risk-medium` |
+| `"no_aplica"` | **N/A** | Slate background, `text-data-missing` |
+| *(other / error)* | **ERROR** | Red background, `text-risk-high` |
+
+---
+
+## Who Uses This Page
+
+<CardGroup cols={2}>
+  <Card title="Directors & Coordinators" icon="building-columns">
+    Use the distribution bars and summary stats to assess institutional risk exposure and track improvement period over period.
+  </Card>
+  <Card title="Audit & Compliance" icon="file-check">
+    The full student listing with `origen_ia` badges and deterministic `motivos` provides a traceable, auditable record of every classification decision, conforming to Art. III of the system specification.
+  </Card>
+</CardGroup>
+
+---
+
+## Navigation Between All Frontend Pages
+
+The reports page shares the same left sidebar and top navbar navigation pattern as the admin and monitoring panels.
+
+| Label | Icon | Path |
+|-------|------|------|
+| Dashboard | `dashboard` | `/admin.html` |
+| Monitoreo | `person_search` | `/monitoreo.html` |
+| **Reportes** (current) | `bar_chart` | `/reportes.html` |
+| Estudiantes | `group` | `/estudiantes.html` |
+
+A **"Cerrar Sesión"** link at the bottom of the sidebar navigates to `/` (the login page).
+
+<Tip>
+  The reports page does not include a print button in its top navbar, but the admin panel's **Resumen Institucional** page (`/admin.html`) does — it exposes a **"Imprimir Reporte"** button that calls `window.print()` for a browser-native PDF export.
+</Tip>

@@ -1,0 +1,184 @@
+---
+title: "Interactive Monitoring Panel for Student Risk"
+sidebarTitle: "Panel Monitoreo"
+description: "The monitoring panel displays all students with their 🟢/🟡/🔴/⚪ risk levels, AI-generated explanations, and pedagogical recommendations."
+---
+
+The monitoring panel is the primary daily workspace for teachers. It presents every student in the cohort as a sortable, filterable table with color-coded risk badges, and opens a sticky side panel with deep per-student detail — including the AI-generated explanation from Google Gemini and a pedagogical recommendation — when any row is selected.
+
+## URL
+
+```
+http://localhost:8000/monitoreo.html
+```
+
+---
+
+## Risk Level Color Coding
+
+All student risk levels are classified by the deterministic engine described in Art. III of the system specification. The four possible states are:
+
+| Badge | Emoji | Label | CSS Color Token | Meaning |
+|-------|-------|-------|-----------------|---------|
+| 🟢 | `🟢` | BAJO | `risk-low` (`#22C55E`) | Low risk — no critical thresholds breached |
+| 🟡 | `🟡` | MEDIO | `risk-medium` (`#F59E0B`) | Medium risk — one or more warning-level thresholds |
+| 🔴 | `🔴` | ALTO | `risk-high` (`#EF4444`) | High risk — critical dropout indicators present |
+| ⚪ | `⚪` | DATO INSUFICIENTE | `data-missing` (`#94A3B8`) | Insufficient data — manual review required |
+
+Each badge renders as a pill with a colored dot, background tint, and uppercase label.
+
+---
+
+## Data Loading
+
+On page load, the panel calls `GET /api/estudiantes` automatically:
+
+```javascript
+document.addEventListener('DOMContentLoaded', () => cargarEstudiantes());
+```
+
+The `cargarEstudiantes` function fetches from the API and populates both the summary stats grid and the student table:
+
+```javascript
+async function cargarEstudiantes(forceRefresh = false) {
+    const url = `${API_BASE}/api/estudiantes${forceRefresh ? '?force_refresh=true' : ''}`;
+    const resp = await fetch(url);
+    todosLosEstudiantes = await resp.json();
+
+    renderStats(todosLosEstudiantes);
+    renderTabla(todosLosEstudiantes);
+}
+```
+
+<Tip>
+  The API caches results in memory after the first call. Passing `force_refresh=true` forces the backend to rerun the classifier and call the Gemini API for every student.
+</Tip>
+
+---
+
+## Summary Stats Cards
+
+At the top of the panel, four stat cards are rendered dynamically from the loaded data:
+
+<CardGroup cols={2}>
+  <Card title="Total Estudiantes" icon="users">
+    Total number of students in the active cohort. Tagged with the period label **"2024-I"**.
+  </Card>
+  <Card title="Riesgo Alto 🔴" icon="triangle-exclamation">
+    Count of students with `nivel_riesgo === '🔴'`. Labeled **"Crítico"** in red.
+  </Card>
+  <Card title="Riesgo Medio 🟡" icon="circle-exclamation">
+    Count of students at medium risk. Labeled **"Atención"** in amber.
+  </Card>
+  <Card title="Dato Insuficiente ⚪" icon="circle-question">
+    Students who cannot be classified due to missing data. Labeled **"Pendiente"** in slate.
+  </Card>
+</CardGroup>
+
+---
+
+## Student Table
+
+The main content area is a `col-span-8` table on large screens, shrinking to full-width on mobile. Each row shows:
+
+| Column | Content |
+|--------|---------|
+| **Estudiante** | Avatar initials (color-coded by risk), full name, ID, and grade |
+| **Riesgo (Art. III)** | Pill badge with dot, background, and label for the current risk level |
+| **Variable clave** | The first entry from the `motivos` array (hidden on mobile) |
+| **Acción** | "Ver Detalle" button that opens the side detail panel |
+
+### Search and Filter
+
+A search input in the table header filters rows in real time by **name** or **student ID**:
+
+```javascript
+function filtrarEstudiantes(texto) {
+    const filtrados = texto.trim() === ''
+        ? todosLosEstudiantes
+        : todosLosEstudiantes.filter(e =>
+            e.nombre.toLowerCase().includes(texto.toLowerCase()) ||
+            e.id.toLowerCase().includes(texto.toLowerCase())
+        );
+    renderTabla(filtrados);
+}
+```
+
+The input carries a `person_search` icon prefix and a placeholder: **"Filtrar por nombre o ID…"**
+
+### Force Refresh Button
+
+A **"Sincronizar Datos"** button in the top header bar calls `cargarEstudiantes(true)`, triggering a full backend reprocess with `?force_refresh=true`. The `sync` icon spins while the request is in flight. The button is hidden on mobile (`hidden md:flex`).
+
+---
+
+## Student Detail Side Panel
+
+Clicking any row — or the "Ver Detalle" button — opens a sticky side panel (`col-span-4`) to the right of the table. The selected row is highlighted with `selected-row` (a left blue border and faint primary tint).
+
+The detail panel is structured as follows:
+
+<Steps>
+  <Step title="Header">
+    Large initials avatar (color matches risk level), full name, grade in uppercase, and a labeled risk badge including the Art. III reference.
+  </Step>
+  <Step title="Trazabilidad Determinista">
+    A list of `motivos` — each displayed as a pill card — explaining exactly which academic thresholds triggered the risk classification. This section is always deterministic and never generated by AI.
+  </Step>
+  <Step title="Perspectiva IA (Google Gemini)">
+    Rendered only when `nivel_riesgo !== '⚪'`. Contains two sub-sections:
+
+    - **Explicación Generativa** — a narrative paragraph from Gemini explaining the student's situation.
+    - **Recomendación Sugerida** — a pedagogical action quoted in italic.
+
+    The section header includes a badge indicating the AI data source: **"En vivo"** or **"Cache"**.
+  </Step>
+  <Step title="Action Buttons">
+    A primary **"Editar Ficha Estudiante"** button navigates to `/estudiantes.html?id={est.id}`. A secondary share icon button is also present.
+  </Step>
+</Steps>
+
+---
+
+## The `origen_ia` Indicator
+
+Every student record carries an `origen_ia` field that describes how the AI content was sourced. The panel surfaces this visibly:
+
+| `origen_ia` Value | Display | Meaning |
+|-------------------|---------|---------|
+| `"vivo"` | Green **"En vivo"** badge | Explanation generated live by Gemini API this session |
+| `"fallback"` | Amber **"Cache"** badge + ⚠️ warning banner | Explanation loaded from a previous valid response |
+| `"no_aplica"` | Not shown (⚪ state renders block message instead) | Student has insufficient data; AI was not called |
+| `"error_sin_cache"` | Red error block | Gemini API failed and no cached response exists |
+
+When any student is in `fallback` mode, a banner also appears above the student table:
+
+> **⚠️ Modo de respaldo activo:** Algunas explicaciones fueron generadas previamente y se muestran desde el cache local. La clasificación de riesgo es siempre determinista y actual.
+
+---
+
+## Fallback and Error States
+
+<CardGroup cols={2}>
+  <Card title="Server Unreachable" icon="cloud-slash">
+    If the `fetch` call fails, the table body renders a `cloud_off` icon, a description, and a **"Reintentar"** button that calls `cargarEstudiantes()` again.
+  </Card>
+  <Card title="No Students Found" icon="magnifying-glass">
+    If the search filter returns zero results, the table renders: **"No se encontraron estudiantes."**
+  </Card>
+</CardGroup>
+
+---
+
+## Sidebar Navigation
+
+The monitoring panel includes a persistent left sidebar on desktop (`lg:flex`) and a bottom navigation bar on mobile. All four main pages are reachable from either:
+
+| Destination | Icon | Path |
+|-------------|------|------|
+| Inicio (Admin Dashboard) | `dashboard` | `/admin.html` |
+| **Monitoreo** (current) | `person_search` | `/monitoreo.html` |
+| Reportes | `bar_chart` | `/reportes.html` |
+| Estudiantes | `group` | `/estudiantes.html` |
+
+A **"Cerrar Sesión"** button at the bottom of the sidebar redirects to `/` (the login page).

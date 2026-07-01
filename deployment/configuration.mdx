@@ -1,0 +1,137 @@
+---
+title: "Configure Vanguardia EPIS: Environment Variables and Options"
+sidebarTitle: "Configuración"
+description: "Reference for all environment variables, the .env file setup, PORT configuration, and the start.sh script flags for Vanguardia EPIS."
+---
+
+Vanguardia EPIS is configured through a single `.env` file located inside the `backend/` directory. The server reads this file at startup using `python-dotenv` and falls back gracefully to a cached-response mode if no API key is found. This page covers every environment variable, the available `start.sh` flags, and the data file paths the system expects.
+
+## Creating the `.env` File
+
+The repository ships with a template at `backend/.env.example`. Copy it to create your working configuration file:
+
+```bash
+cp backend/.env.example backend/.env
+```
+
+The template contents are:
+
+```env
+# Variables de entorno — Vanguardia EPIS Backend
+# Copia este archivo como .env y completa los valores
+
+# API Key de Google Gemini
+# Obtén una GRATIS en: https://aistudio.google.com/app/apikey
+GEMINI_API_KEY=tu-api-key-aqui
+
+# Puerto del servidor (opcional, por defecto 8000)
+# PORT=8000
+```
+
+<Warning>
+  Never commit your `backend/.env` file to version control. It contains your secret API key. The repository's `.gitignore` should already exclude it, but double-check before pushing any commits.
+</Warning>
+
+## Environment Variables Reference
+
+### `GEMINI_API_KEY`
+
+The API key for Google Gemini, which powers the AI-generated pedagogical explanations and recommendations shown in the monitoring dashboard.
+
+| Field | Value |
+|---|---|
+| **Required** | Recommended (see fallback mode below) |
+| **Where to get it** | [https://aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey) — free tier available |
+| **What it enables** | Live AI responses from `gemini-2.0-flash` for each student's risk explanation and teaching recommendations |
+
+```env
+GEMINI_API_KEY=AIzaSyXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+```
+
+### `PORT`
+
+The TCP port the FastAPI server listens on. Configured in `backend/main.py` as:
+
+```python
+port = int(os.environ.get("PORT", 8000))
+```
+
+The default is `8000`. Override it by uncommenting and editing the line in `backend/.env`:
+
+```env
+PORT=9000
+```
+
+Or pass it inline before starting:
+
+```bash
+PORT=9000 ./start.sh
+```
+
+## Fallback Mode (No API Key)
+
+If `GEMINI_API_KEY` is not set and no `backend/.env` file exists, the server still starts — in **fallback-only mode**. In this mode, all AI responses are served from the pre-generated cache file at `cache/respuestas_ia.json`. No calls are made to the Gemini API.
+
+The `start.sh` script signals this clearly at startup:
+
+```
+⚠️  No se encontró GEMINI_API_KEY.
+   El servidor iniciará en modo de respaldo (fallback).
+   Para configurar la API: ./start.sh --api-key TU_KEY
+```
+
+This resilience mechanism is mandated by Art. VIII of the project constitution, ensuring the system remains operational even when connectivity or API quota is unavailable.
+
+## The `start.sh` Script
+
+The `start.sh` script wraps the server startup with automatic key management and cache generation. It supports three invocation patterns:
+
+<CardGroup cols={1}>
+  <Card title="Basic start (uses existing .env)" icon="play">
+    ```bash
+    ./start.sh
+    ```
+    Reads `GEMINI_API_KEY` from the existing `backend/.env`. If no `.env` exists, starts in fallback mode.
+  </Card>
+  <Card title="Pass API key as argument" icon="key">
+    ```bash
+    ./start.sh --api-key YOUR_GEMINI_KEY
+    ```
+    Writes the provided key directly to `backend/.env` (overwriting any previous value), then starts the server.
+  </Card>
+  <Card title="Pass API key as environment variable" icon="terminal">
+    ```bash
+    GEMINI_API_KEY=AIzaSyXXX ./start.sh
+    ```
+    If no `backend/.env` file exists, the script reads `GEMINI_API_KEY` from the shell environment and saves it to `backend/.env` automatically before starting.
+  </Card>
+</CardGroup>
+
+### Auto Cache Generation
+
+On **first launch**, if `backend/.env` exists (meaning an API key is available) but `cache/respuestas_ia.json` does not yet exist, `start.sh` automatically runs `generar_cache.py` before starting the server:
+
+```
+🔄 Generando cache de respaldo (primera vez)...
+✅ Cache generado.
+```
+
+On subsequent launches, if the cache file already exists, the script skips regeneration:
+
+```
+✅ Cache de respaldo encontrado.
+```
+
+## Data File Locations
+
+The server expects the following files to be present or auto-created at runtime:
+
+| Path | Description | Created by |
+|---|---|---|
+| `data/estudiantes.json` | Student dataset with academic and risk variables | Included in repo |
+| `data/docentes.json` | Teacher/tutor registry | Auto-created as empty `[]` on first API call if missing |
+| `cache/respuestas_ia.json` | Pre-generated Gemini AI responses (the fallback cache) | `generar_cache.py` or `start.sh` on first launch |
+
+<Note>
+  The `data/docentes.json` file is auto-created as an empty array the first time a docente-related API endpoint is called, so you do not need to create it manually.
+</Note>

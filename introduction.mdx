@@ -1,0 +1,134 @@
+---
+title: "Vanguardia EPIS: Sistema de Detección Temprana de Riesgo Escolar"
+sidebarTitle: "Introducción"
+description: "Vanguardia EPIS detecta estudiantes en riesgo académico usando reglas deterministas y Google Gemini, diseñado para operar offline en zonas rurales del Perú."
+---
+
+Vanguardia EPIS es un sistema de alerta temprana y recomendación pedagógica personalizada para docentes y tutores de instituciones educativas rurales y urbano-marginales del Perú. Construido sobre FastAPI, Google Gemini 2.0 Flash y una interfaz HTML/JS liviana, el sistema permite identificar estudiantes en riesgo de bajo rendimiento o deserción — y entregar al docente una explicación contextualizada y una recomendación de apoyo — todo sin exigir conectividad en el hogar del estudiante.
+
+## El problema que resuelve
+
+Los docentes identifican el bajo rendimiento y la deserción cuando el problema ya está avanzado: el estudiante ya acumuló demasiadas faltas o sus notas cayeron de manera irreversible. No existe una forma sencilla de detectar señales tempranas ni de personalizar el apoyo según cada caso.
+
+Este rezago tiene consecuencias medibles en el contexto peruano:
+
+- Solo el **16.7 %** de estudiantes rurales de 2.º de primaria alcanza el nivel esperado en comprensión lectora, frente al **49.7 %** en zonas urbanas (ECE, MINEDU).
+- La tasa de deserción en secundaria rural llega al **5.2 %** — y hasta el **8.6 %** en mujeres (MINEDU).
+- **6 de cada 10** estudiantes de menor nivel socioeconómico no tienen acceso a internet en casa (BID, 2024).
+
+Dado que la mayoría del tiempo de uso ocurre en la institución educativa, Vanguardia EPIS está diseñado para funcionar desde la escuela, no desde el hogar, eliminando la dependencia de conectividad domiciliaria.
+
+## Principios de diseño
+
+<Note>
+  Vanguardia EPIS fue desarrollado con la metodología **SDD (Spec-Driven Development)**, estructurando el proyecto en tres fases estratégicas antes de escribir la primera línea de código. Esto garantiza que cada decisión de arquitectura esté respaldada por una especificación auditada.
+</Note>
+
+### Metodología SDD — 3 fases
+
+1. **Fase 1 — Captura de Intención (SSD):** Definición del problema, usuarios (docentes y tutores) y limitaciones de infraestructura, incluyendo la falta de conectividad recurrente en el hogar del estudiante.
+2. **Fase 2 — Constitución del Proyecto:** Establecimiento de reglas de negocio inmutables (Artículos I–XII), con énfasis en la no estigmatización del estudiante (Art. IV) y la división estricta de responsabilidades (Art. II).
+3. **Fase 3 — Especificación Técnica y Blueprint:** Congelación del diseño del motor de reglas, prompts del sistema, contratos de datos (JSON schemas), casos de prueba y mecanismo de fallback offline.
+
+### Separación determinismo / IA generativa
+
+La clasificación de riesgo y la generación de explicaciones son **responsabilidades estrictamente separadas**:
+
+| Capa | Tecnología | Característica |
+|------|-----------|----------------|
+| Clasificación de riesgo (🟢 / 🟡 / 🔴 / ⚪) | Motor de reglas (`classifier.py`) | 100 % determinista, auditable, idéntico en cada ejecución |
+| Explicación y recomendación pedagógica | Google Gemini 2.0 Flash | Texto personalizado, diferente para cada estudiante y contexto |
+
+Esta separación garantiza **trazabilidad**: un docente o auditor puede siempre conocer exactamente qué datos y qué umbrales produjeron una clasificación, independientemente de lo que la IA haya redactado.
+
+## Artículos clave de la Constitución del Proyecto
+
+La Constitución del Proyecto (Fase 2) establece reglas de negocio inmutables que guían toda la implementación:
+
+- **Art. II — Separación de responsabilidades:** La lógica de clasificación y la generación de texto por IA son módulos independientes con interfaces definidas. Ninguna puede modificar el resultado de la otra.
+- **Art. III — Clasificación de riesgo:** Los umbrales son fijos y públicos. Asistencia ≥ 90 % → 🟢; 75–89 % → 🟡; < 75 % → 🔴. Notas (escala vigesimal) ≥ 13 → 🟢; 11–12 → 🟡; < 11 → 🔴. Dos o más señales 🟡 escalan a 🔴 por acumulación.
+- **Art. IV — Lenguaje no estigmatizante:** Las recomendaciones generadas por la IA deben ser respetuosas y no pueden culpabilizar ni etiquetar al estudiante. El equipo valida manualmente antes de cada demo.
+- **Art. VIII — Caché offline obligatorio:** Si la API Key falla o se excede la cuota de Gemini, el sistema sirve explicaciones previamente validadas desde `cache/respuestas_ia.json`, garantizando operación continua.
+- **Art. IX — Manejo de datos ausentes:** Cuando las tres variables (asistencia, notas, participación) carecen de dato, el sistema retorna el estado **⚪ Dato insuficiente** en lugar de asumir un riesgo. Esto evita estigmatizar a un estudiante por falta de registro.
+
+## Componentes del sistema
+
+```
+proyecto/
+├── backend/
+│   ├── main.py            # API REST (FastAPI) y servicio de archivos estáticos
+│   ├── classifier.py      # Lógica determinista de clasificación de riesgo (Art. III)
+│   ├── ia_client.py       # Conector con Google Gemini API (gemini-2.0-flash)
+│   ├── fallback.py        # Módulo de gestión de caché local
+│   ├── requirements.txt   # Dependencias de Python
+│   └── .env.example       # Plantilla de variables de entorno
+├── data/
+│   └── estudiantes.json   # Dataset ficticio de 20 estudiantes de prueba
+├── cache/
+│   └── respuestas_ia.json # Explicaciones de IA cacheadas
+├── frontend/              # Interfaz de usuario (HTML5/Vanilla JS/Tailwind CSS)
+│   ├── index.html         # Pantalla de Login
+│   ├── monitoreo.html     # Panel de Monitoreo Interactivo
+│   ├── admin.html         # Métricas y Distribución Global
+│   └── reportes.html      # Reportes analíticos y listados completos
+├── start.sh               # Script de inicio automatizado para Linux/macOS
+└── generar_cache.py       # Script utilitario para pre-generar el caché de la IA
+```
+
+### Backend — FastAPI
+
+El servidor expone una API REST bajo el prefijo `/api/` e implementa la Especificación Técnica §7. La clasificación de todos los estudiantes se procesa en paralelo (`asyncio.gather`) en el primer llamado, y los resultados se mantienen en un caché en memoria por sesión para evitar llamadas repetidas a Gemini durante la demo.
+
+Endpoints disponibles:
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| `GET` | `/api/health` | Estado del servidor y versión |
+| `GET` | `/api/estudiantes` | Lista todos los estudiantes clasificados |
+| `GET` | `/api/estudiantes/{id}` | Detalle de un estudiante específico |
+| `POST` | `/api/estudiantes` | Crear o editar un estudiante |
+| `DELETE` | `/api/estudiantes/{id}` | Eliminar un estudiante |
+| `GET` | `/api/stats` | Estadísticas globales para el dashboard |
+| `GET` | `/api/docentes` | Lista de docentes registrados |
+| `POST` | `/api/docentes` | Crear o editar un docente |
+| `DELETE` | `/api/docentes/{id}` | Eliminar un docente |
+
+### Frontend — HTML / Vanilla JS / Tailwind CSS
+
+La interfaz está compuesta por cuatro páginas HTML estáticas servidas directamente por FastAPI:
+
+- **`index.html`** — Pantalla de Login.
+- **`monitoreo.html`** — Panel de Monitoreo Interactivo con niveles de riesgo por estudiante.
+- **`admin.html`** — Métricas globales y distribución de riesgo.
+- **`reportes.html`** — Reportes analíticos y listados completos.
+
+El frontend no requiere un servidor de desarrollo separado; FastAPI lo sirve como archivos estáticos desde el directorio `frontend/`.
+
+### Motor de clasificación — `classifier.py`
+
+El motor de reglas evalúa cada variable de forma aislada y aplica la **regla del peor caso** (Art. III §3.2.1): si cualquier variable individual alcanza 🔴, la clasificación global es 🔴. Si hay dos o más señales 🟡, también se eleva a 🔴 por acumulación. Los umbrales están congelados en la especificación y son públicamente auditables.
+
+### Integración con IA — Google Gemini 2.0 Flash
+
+`ia_client.py` conecta con el modelo `gemini-2.0-flash` usando la librería `google-genai`. Recibe como entrada el nombre, grado, nivel de riesgo, motivos y variables faltantes del estudiante, y devuelve un objeto con los campos `explicacion`, `recomendacion` y `origen_ia`. El campo `origen_ia` indica si la respuesta proviene de la API en vivo (`"vivo"`), del caché offline (`"fallback"`) o si hubo un error sin caché disponible (`"error_sin_cache"`).
+
+### Caché de fallback
+
+El módulo `fallback.py` gestiona `cache/respuestas_ia.json`. El script `generar_cache.py` permite pre-cargar las respuestas de Gemini para todos los estudiantes del dataset antes de la demo, garantizando que el sistema opere sin interrupciones incluso con cuota de API agotada o sin conexión.
+
+## Explora más
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Instala y ejecuta Vanguardia EPIS en menos de 5 minutos con el script de inicio automatizado.
+  </Card>
+  <Card title="Arquitectura" icon="sitemap" href="/architecture/overview">
+    Diagrama de componentes, flujo de datos y decisiones de diseño de la Constitución del Proyecto.
+  </Card>
+  <Card title="Referencia de la API" icon="code" href="/api/overview">
+    Documentación completa de endpoints, modelos Pydantic y esquemas de respuesta JSON.
+  </Card>
+  <Card title="Panel de Monitoreo" icon="display" href="/frontend/monitoring">
+    Cómo interpretar los niveles de riesgo, las explicaciones de IA y las recomendaciones pedagógicas en la interfaz.
+  </Card>
+</CardGroup>

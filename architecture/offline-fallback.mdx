@@ -1,0 +1,248 @@
+---
+title: "Offline Cache and Fallback Resilience"
+sidebarTitle: "Modo Offline"
+description: "How Vanguardia EPIS maintains full functionality without internet using a pre-generated AI response cache per Article VIII of the project constitution."
+---
+
+Vanguardia EPIS is designed for teachers in Peruvian rural schools, where internet access at the point of use — the school itself — can be intermittent or absent. According to **BID (2024), 6 in 10 lower-income Peruvian students have no home internet**; this is also the demographic whose teachers are the primary users of this system. To ensure the dashboard always shows complete, useful information regardless of connectivity, the system maintains a pre-generated JSON cache of all AI responses. This is not an optional optimisation — **Article VIII §6.1 of the project constitution makes the cache mandatory**.
+
+---
+
+## How the Cache Fits into the Resilience Chain
+
+The offline cache is the second layer in a three-level resilience chain managed by `ia_client.py`:
+
+```
+1. Live Gemini API call (timeout: 10 s)
+        │ success → origen_ia = "vivo"
+        │ failure / timeout ↓
+2. cache/respuestas_ia.json lookup
+        │ hit    → origen_ia = "fallback"
+        │ miss   ↓
+3. respuesta_error_sin_cache()
+                   → origen_ia = "error_sin_cache"
+                   (polite error message, never a raw exception)
+```
+
+---
+
+## Cache File Location
+
+```
+<project_root>/
+└── cache/
+    └── respuestas_ia.json
+```
+
+The path is resolved relative to `fallback.py` at import time:
+
+```python
+CACHE_PATH = Path(__file__).parent.parent / "cache" / "respuestas_ia.json"
+```
+
+---
+
+## Cache File Structure
+
+The cache is a flat JSON object keyed by student ID. Each entry contains the two AI-generated text fields plus a UTC timestamp recording when the entry was generated.
+
+```json
+{
+  "EST-001": {
+    "explicacion": "En semanas recientes, Ana ha mantenido una asistencia de 95% y un promedio de 15, lo que refleja un desempeño sólido y constante.",
+    "recomendacion": "Se sugiere continuar reforzando el reconocimiento de sus logros para mantener su motivación alta.",
+    "generado_en": "2025-01-15T14:32:07.451234+00:00"
+  },
+  "EST-002": {
+    "explicacion": "Carlos ha presentado una asistencia del 68% y un promedio de 9.5, señales que merecen atención oportuna.",
+    "recomendacion": "Se recomienda una conversación individual para identificar posibles obstáculos y coordinar apoyo con la familia.",
+    "generado_en": "2025-01-15T14:32:09.102847+00:00"
+  }
+}
+```
+
+<Note>
+Students classified as ⚪ (`NIVEL_INSUFICIENTE`) are **not stored in the cache** — there are no motives to explain, so no AI response is generated for them. The `generar_cache.py` script explicitly skips them with a log message.
+</Note>
+
+---
+
+## `fallback.py` — Module Reference
+
+### Lazy-Loading Pattern
+
+The cache is loaded from disk only once, on the first call to any function in the module. Subsequent calls reuse the in-memory dict. This avoids repeated disk I/O during a session where the dashboard may request dozens of students.
+
+```python
+_cache: dict = {}
+_cache_cargado = False
+
+def _cargar_cache() -> dict:
+    """Carga el cache desde disco (lazy loading)."""
+    global _cache, _cache_cargado
+    if _cache_cargado:
+        return _cache
+
+    if CACHE_PATH.exists():
+        try:
+            with open(CACHE_PATH, "r", encoding="utf-8") as f:
+                _cache = json.load(f)
+            print(f"[Fallback] Cache cargado: {len(_cache)} entradas desde {CACHE_PATH}")
+        except (json.JSONDecodeError, IOError) as e:
+            print(f"[Fallback] Error al cargar cache: {e}")
+            _cache = {}
+    else:
+        print(f"[Fallback] Cache no encontrado en {CACHE_PATH} — ...")
+        _cache = {}
+
+    _cache_cargado = True
+    return _cache
+```
+
+---
+
+### `obtener_fallback(id_estudiante)`
+
+Looks up a student in the in-memory (lazily loaded) cache. Returns a ready-to-use response dict if the student is found, or `None` if not.
+
+```python
+def obtener_fallback(id_estudiante: str) -> dict | None:
+```
+
+**Returns on hit:**
+
+```python
+{
+    "explicacion": "...",
+    "recomendacion": "...",
+    "origen_ia": "fallback",        # ← injected by this function
+    "generado_en": "2025-01-15T14:32:07.451234+00:00",
+}
+```
+
+**Returns on miss:** `None` — the caller (`ia_client.py`) then invokes `respuesta_error_sin_cache()`.
+
+---
+
+### `guardar_en_cache(id_estudiante, explicacion, recomendacion)`
+
+Persists a new entry to both disk and the in-memory dict. Used by `generar_cache.py` during cache pre-generation, and also called by `ia_client.py` after every successful live API response so the cache stays up to date.
+
+```python
+def guardar_en_cache(id_estudiante: str, explicacion: str, recomendacion: str) -> None:
+```
+
+The function:
+1. Calls `_cargar_cache()` to ensure the in-memory dict is initialised
+2. Adds or overwrites the entry with a fresh UTC timestamp
+3. Creates the `cache/` directory if it does not exist (`mkdir parents=True`)
+4. Writes the entire updated dict to `respuestas_ia.json` with `ensure_ascii=False`
+5. Updates `_cache` in memory so subsequent reads reflect the new entry immediately
+
+---
+
+### `respuesta_error_sin_cache()`
+
+The last-resort response. **Article VIII §6.2** mandates that no raw error is ever shown to the teacher. This function always returns a polite, actionable message.
+
+```python
+def respuesta_error_sin_cache() -> dict:
+    return {
+        "explicacion": "No se pudo generar la explicación en este momento.",
+        "recomendacion": "Por favor, reintente más tarde o contacte al soporte técnico para revisión manual.",
+        "origen_ia": "error_sin_cache",
+    }
+```
+
+---
+
+## `generar_cache.py` — Pre-Generation Script
+
+`generar_cache.py` (at the project root) is a standalone async script that populates the entire cache in one pass before the server starts. It operates as follows:
+
+<Steps>
+  <Step title="Validate GEMINI_API_KEY">
+    The script aborts immediately with a helpful error and a link to Google AI Studio if the environment variable is not set.
+  </Step>
+  <Step title="Load the full dataset">
+    Reads `data/estudiantes.json` — the same file the server uses.
+  </Step>
+  <Step title="Classify each student">
+    Calls `clasificar_estudiante()` for each record. Students classified as ⚪ are skipped with an `⚪ omitido` log message.
+  </Step>
+  <Step title="Call Gemini live for each student">
+    For non-⚪ students, calls `generar_explicacion()` sequentially (with a 0.5 s delay between calls to avoid rate-limiting). Only responses with `origen_ia == "vivo"` are written to the cache.
+  </Step>
+  <Step title="Write to cache/respuestas_ia.json">
+    Each successful response is immediately persisted via `guardar_en_cache()`. The final count of saved entries is printed to stdout.
+  </Step>
+</Steps>
+
+```bash
+# Run from the project root (requires GEMINI_API_KEY in environment)
+export GEMINI_API_KEY=your_key_here
+python3 generar_cache.py
+```
+
+**Example output:**
+
+```
+🚀 Generando cache de fallback (Art. VIII §6.1)
+   Dataset: /path/to/data/estudiantes.json
+   Cache: /path/to/cache/respuestas_ia.json
+------------------------------------------------------------
+  ⏳ EST-001 — Ana Quispe (🟢)... ✅
+  ⏳ EST-002 — Carlos Mamani (🔴)... ✅
+  ⚪ EST-008 — [nombre] — Sin datos → omitido.
+  ...
+
+✅ Cache generado: 17 entradas.
+   Archivo: /path/to/cache/respuestas_ia.json
+```
+
+---
+
+## Automatic Cache Generation via `start.sh`
+
+The `start.sh` startup script checks for the cache file before launching the server. If the cache does not yet exist and a valid API key is available, it runs `generar_cache.py` automatically — so the first launch is always fully prepared.
+
+```bash
+# start.sh logic (simplified):
+CACHE_FILE="$PROJECT_DIR/cache/respuestas_ia.json"
+if [ -f "$ENV_FILE" ] && [ ! -f "$CACHE_FILE" ]; then
+    echo "🔄 Generando cache de respaldo (primera vez)..."
+    cd "$PROJECT_DIR" && python3 generar_cache.py && echo "✅ Cache generado."
+elif [ -f "$CACHE_FILE" ]; then
+    echo "✅ Cache de respaldo encontrado."
+fi
+```
+
+```bash
+# Start with API key (auto-generates cache on first run)
+./start.sh --api-key YOUR_GEMINI_KEY
+
+# Start without key (runs in fallback-only mode)
+./start.sh
+```
+
+---
+
+## In-Memory Session Cache in `main.py`
+
+Separate from the disk cache in `fallback.py`, `main.py` maintains its own in-memory session cache to avoid redundant API calls during a single server session.
+
+```python
+# From main.py
+_resultados_cache: dict[str, EstudianteResultado] = {}
+```
+
+On the first call to `GET /api/estudiantes`, all students are processed in parallel via `asyncio.gather()` and the results are stored in `_resultados_cache`. Subsequent requests return the in-memory results instantly. This cache is cleared when the server restarts.
+
+<Tip>
+Both caches serve different purposes: the disk cache in `cache/respuestas_ia.json` survives server restarts and enables offline mode. The in-memory `_resultados_cache` in `main.py` is ephemeral and exists only to avoid duplicate Gemini calls within a single demo session.
+</Tip>
+
+| Cache | Location | Survives restart | Purpose |
+|---|---|---|---|
+| Disk cache | `cache/respuestas_ia.json` | ✅ Yes | Offline fallback, pre-generated AI responses |
+| Session cache | `_resultados_cache` in `main.py` | ❌ No | Avoid duplicate API calls within one session |
