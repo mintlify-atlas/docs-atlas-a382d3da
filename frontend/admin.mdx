@@ -1,7 +1,7 @@
 ---
 title: "Administration Panel: Manage Students and Teachers"
 sidebarTitle: "Administración"
-description: "The admin panel provides institution-wide statistics, student CRUD management, and teacher registration for Vanguardia EPIS."
+description: "The admin panel provides institution-wide risk stats, a grade-level stacked bar chart, critical alert feed, and full CRUD tools for teachers and students."
 ---
 
 The administration panel is designed for school directors and coordinators who need an institution-wide view of risk distribution across grades. Unlike the monitoring panel — which focuses on per-student pedagogical detail — the admin panel surfaces aggregate metrics, a stacked bar chart grouped by school year, a real-time alert feed, and full CRUD tools for managing students and teachers.
@@ -24,7 +24,7 @@ An **"Actualizar Datos"** button in the top-right triggers `cargarDatosAdmin(tru
 
 ## Global Statistics Dashboard
 
-On page load, `cargarDatosAdmin()` fetches all students from `GET /api/estudiantes` and computes the following metrics:
+On page load, `cargarDatosAdmin()` fetches all students from `GET /api/estudiantes` and computes every metric **client-side** from the returned list:
 
 ### Risk Count Summary
 
@@ -53,10 +53,10 @@ A stacked bar chart (`#stacked-chart`) renders one column per school year — fr
 
 | Segment (bottom to top) | Color Token | Risk |
 |-------------------------|-------------|------|
-| `bg-risk-low` | `#22C55E` | 🟢 Bajo |
-| `bg-risk-medium` | `#F59E0B` | 🟡 Medio |
-| `bg-risk-high` | `#EF4444` | 🔴 Alto |
 | `bg-data-missing` | `#94A3B8` | ⚪ Insuficiente |
+| `bg-risk-high` | `#EF4444` | 🔴 Alto |
+| `bg-risk-medium` | `#F59E0B` | 🟡 Medio |
+| `bg-risk-low` | `#22C55E` | 🟢 Bajo |
 
 Segments are sized proportionally using inline `style="height: {pct}%"`. Each bar segment shows a tooltip on hover with the exact count and percentage.
 

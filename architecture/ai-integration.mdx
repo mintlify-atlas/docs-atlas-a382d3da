@@ -1,5 +1,5 @@
 ---
-title: "Google Gemini AI Integration"
+title: "Google Gemini AI Integration for Pedagogical Explanations"
 sidebarTitle: "Integración Gemini"
 description: "How Vanguardia EPIS uses Google Gemini 2.0 Flash to generate non-stigmatizing pedagogical explanations and recommendations for teachers."
 ---
@@ -207,7 +207,7 @@ When the model follows Rule 6 correctly, the raw API response text looks like:
 }
 ```
 
-After `json.loads()`, the `explicacion` and `recomendacion` fields are extracted, validated as non-empty strings, and returned alongside `origen_ia: "vivo"`. The response is also written to the disk cache via `guardar_en_cache()` for future offline use.
+After `json.loads()`, the `explicacion` and `recomendacion` fields are extracted, validated as non-empty strings, and returned alongside `origen_ia: "vivo"`. The disk cache is populated separately — `generar_cache.py` calls `guardar_en_cache()` during pre-generation; `ia_client.py` itself does not write to disk after a live response.
 
 ---
 

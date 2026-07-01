@@ -1,7 +1,7 @@
 ---
-title: "Interactive Monitoring Panel for Student Risk"
+title: "Student Risk Monitoring Panel: Gemini AI Explanations"
 sidebarTitle: "Panel Monitoreo"
-description: "The monitoring panel displays all students with their 🟢/🟡/🔴/⚪ risk levels, AI-generated explanations, and pedagogical recommendations."
+description: "Teacher workspace showing every student's risk badge, Gemini AI explanation, and a pedagogical recommendation sourced from the live classification engine."
 ---
 
 The monitoring panel is the primary daily workspace for teachers. It presents every student in the cohort as a sortable, filterable table with color-coded risk badges, and opens a sticky side panel with deep per-student detail — including the AI-generated explanation from Google Gemini and a pedagogical recommendation — when any row is selected.
@@ -172,7 +172,9 @@ When any student is in `fallback` mode, a banner also appears above the student 
 
 ## Sidebar Navigation
 
-The monitoring panel includes a persistent left sidebar on desktop (`lg:flex`) and a bottom navigation bar on mobile. All four main pages are reachable from either:
+The monitoring panel includes a persistent left sidebar on desktop (`lg:flex`) and a bottom navigation bar on mobile.
+
+**Desktop sidebar** — all four destinations:
 
 | Destination | Icon | Path |
 |-------------|------|------|
@@ -182,3 +184,11 @@ The monitoring panel includes a persistent left sidebar on desktop (`lg:flex`) a
 | Estudiantes | `group` | `/estudiantes.html` |
 
 A **"Cerrar Sesión"** button at the bottom of the sidebar redirects to `/` (the login page).
+
+**Mobile bottom nav** — three shortcuts only (Estudiantes is not included):
+
+| Destination | Icon | Path |
+|-------------|------|------|
+| Inicio | `home` | `/admin.html` |
+| **Monitoreo** (current) | `person_search` | `/monitoreo.html` |
+| Reportes | `bar_chart` | `/reportes.html` |

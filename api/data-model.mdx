@@ -1,5 +1,5 @@
 ---
-title: "Vanguardia EPIS Data Models and JSON Schemas"
+title: "Vanguardia EPIS — Student and AI Data Model Reference"
 sidebarTitle: "Modelo de Datos"
 description: "Complete reference for all JSON data structures in Vanguardia EPIS: student records, teacher records, risk results, and AI response cache format."
 ---
@@ -331,17 +331,12 @@ The Gemini AI client persists generated text to `cache/respuestas_ia.json` so th
     "explicacion": "Jhon presenta una asistencia del 60% y un promedio de 9.5, junto con una participación baja en aula, lo que sugiere que puede estar atravesando dificultades que le impiden involucrarse de manera regular en las actividades escolares.",
     "recomendacion": "Se recomienda establecer una conversación privada y empática con Jhon para conocer los factores que están afectando su asistencia y rendimiento. Involucrar a la familia y, de ser posible, al equipo de orientación para diseñar juntos un plan de acompañamiento personalizado.",
     "generado_en": "2026-07-01T16:24:00+00:00"
-  },
-  "EST-004": {
-    "explicacion": null,
-    "recomendacion": null,
-    "generado_en": null
   }
 }
 ```
 
 <Note>
-  EST-004 is not present in the real cache file because `origen_ia: "no_aplica"` means no AI call is made for `⚪` students — no cache entry is written for them. The `null` entry above is shown for illustration of the absent-key behaviour only.
+  Students with `nivel_riesgo: "⚪"` (such as EST-004) are **absent from the cache file entirely** — no key is written for them. Because `origen_ia` is set to `"no_aplica"`, the AI client is never called for `⚪` students, so there is nothing to persist. When looking up a `⚪` student you will not find their ID as a key in `cache/respuestas_ia.json`.
 </Note>
 
 ---

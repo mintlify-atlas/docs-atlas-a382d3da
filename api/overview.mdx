@@ -1,5 +1,5 @@
 ---
-title: "Vanguardia EPIS REST API Overview"
+title: "Vanguardia EPIS REST API — Reference & Architecture"
 sidebarTitle: "Visión General"
 description: "The Vanguardia EPIS REST API provides endpoints for student risk classification, teacher management, and global statistics. Built with FastAPI."
 ---
@@ -8,7 +8,7 @@ Vanguardia EPIS exposes a RESTful API built with [FastAPI](https://fastapi.tiang
 
 ## Base URL
 
-```
+```text
 http://localhost:8000
 ```
 
@@ -18,7 +18,7 @@ The server is designed for local institutional deployment. There is no global pr
 
 FastAPI auto-generates a Swagger UI at:
 
-```
+```text
 http://localhost:8000/docs
 ```
 
@@ -36,12 +36,12 @@ All endpoints are prefixed with `/api/`.
 |--------|------|-------------|
 | `GET` | `/api/health` | Server health check and version |
 | `GET` | `/api/estudiantes` | List all students with risk classification and AI explanations |
-| `GET` | `/api/estudiantes/{id_estudiante}` | Get a single student by ID |
+| `GET` | `/api/estudiantes/:id_estudiante` | Get a single student by ID |
 | `POST` | `/api/estudiantes` | Create or update a student record |
-| `DELETE` | `/api/estudiantes/{id_estudiante}` | Delete a student by ID |
+| `DELETE` | `/api/estudiantes/:id_estudiante` | Delete a student by ID |
 | `GET` | `/api/docentes` | List all registered teachers |
 | `POST` | `/api/docentes` | Create or update a teacher record |
-| `DELETE` | `/api/docentes/{id_docente}` | Delete a teacher by ID |
+| `DELETE` | `/api/docentes/:id_docente` | Delete a teacher by ID |
 | `GET` | `/api/stats` | Global risk-level distribution statistics |
 
 ## In-Memory Session Cache
